@@ -22,7 +22,7 @@ function harness(initial, settings = { pollIntervalSeconds: 1, falsePolling: fal
   };
   const storage = new Map();
   if (settings !== null) storage.set('overlay-timer-ui-settings-v1', JSON.stringify(settings));
-  const state = { list: initial, stallList: false, slow: new Set(), responses: new Map(), calls, node, storage, toggles: [] };
+  const state = { list: initial, stallList: false, slow: new Set(), responses: new Map(), calls, node, storage, toggles: [], extensions: [] };
   function schedule(fn, delay, interval = 0) {
     const id = ++serial;
     timers.set(id, { fn, at: now + delay, interval });
@@ -32,7 +32,10 @@ function harness(initial, settings = { pollIntervalSeconds: 1, falsePolling: fal
     console, AbortController,
     performance: { now: () => now },
     localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value) },
-    document: { getElementById: node, querySelectorAll: selector => selector === '.mobile-toggle' ? state.toggles : [] },
+    document: {
+      getElementById: node, querySelectorAll: selector => selector === '.mobile-toggle' ? state.toggles
+        : selector === '.timer-extension' ? state.extensions : []
+    },
     setTimeout: (fn, delay) => schedule(fn, delay), clearTimeout: id => timers.delete(id),
     setInterval: (fn, delay) => schedule(fn, delay, delay), clearInterval: id => timers.delete(id),
     fetch(url, options = {}) {
@@ -166,10 +169,12 @@ test('settings apply to all schedules, preserve pending requests, and survive re
 
 test('false polling interpolates running timers and agents, preserves paused timers, and resyncs', async () => {
   const h = harness([sample('pc'), agent('pc', '1'), agent('pc', '2')], { pollIntervalSeconds: 5, falsePolling: true });
-  h.responses.set('http://pc:18081/status', { ...status, remaining_seconds: 2135, on_behalf_of: [
-    { ...status, id: '1', name: 'Running agent', remaining_seconds: 20 },
-    { ...status, id: '2', name: 'Paused agent', remaining_seconds: 40, is_running: false },
-  ] });
+  h.responses.set('http://pc:18081/status', {
+    ...status, remaining_seconds: 2135, on_behalf_of: [
+      { ...status, id: '1', name: 'Running agent', remaining_seconds: 20 },
+      { ...status, id: '2', name: 'Paused agent', remaining_seconds: 40, is_running: false },
+    ]
+  });
   h.start();
   await h.advance(0);
   h.run('showDetail("pc")');
@@ -193,13 +198,17 @@ test('false polling interpolates running timers and agents, preserves paused tim
 
 test('discovered systems have separate cards and controls but one status request per host', async () => {
   const h = harness([sample('pc4'), agent('pc4', '1'), agent('pc4', '20'), sample('pc5'), agent('pc5', '1')]);
-  h.responses.set('http://pc4:18081/status', { ...status, on_behalf_of: [
-    { ...status, id: '20', remaining_seconds: 20 },
-    { ...status, id: '1', remaining_seconds: 91, is_running: false },
-  ] });
-  h.responses.set('http://pc5:18081/status', { ...status, on_behalf_of: [
-    { ...status, id: '1', remaining_seconds: 45 },
-  ] });
+  h.responses.set('http://pc4:18081/status', {
+    ...status, on_behalf_of: [
+      { ...status, id: '20', remaining_seconds: 20 },
+      { ...status, id: '1', remaining_seconds: 91, is_running: false },
+    ]
+  });
+  h.responses.set('http://pc5:18081/status', {
+    ...status, on_behalf_of: [
+      { ...status, id: '1', remaining_seconds: 45 },
+    ]
+  });
   h.start();
   await h.advance(0);
   assert.equal(h.node('activeCount').textContent, '(5/5)');
@@ -335,7 +344,8 @@ test('invalid settings cannot overwrite the current interval', async () => {
 test('special buttons use each timer labels and send only the name to the owning endpoint', async () => {
   const h = harness([sample('pc'), agent('pc', '1'), agent('pc', '20')]);
   const name = 'Switch "off" & <TV>';
-  h.responses.set('http://pc:18081/status', { ...status,
+  h.responses.set('http://pc:18081/status', {
+    ...status,
     special_commands: [{ name: 'Lock PC', short_name: 'LOCK' }],
     on_behalf_of: [
       { ...status, id: '1', special_commands: [{ name, short_name: 'OFF' }] },
@@ -368,9 +378,11 @@ test('special buttons use each timer labels and send only the name to the owning
 
 test('pending special commands disable both views and coalesce repeated clicks without blocking polls', async () => {
   const h = harness([sample('pc'), agent('pc', '1')]);
-  h.responses.set('http://pc:18081/status', { ...status, on_behalf_of: [
-    { ...status, id: '1', special_commands: [{ name: 'switch_off', short_name: 'OFF' }] },
-  ] });
+  h.responses.set('http://pc:18081/status', {
+    ...status, on_behalf_of: [
+      { ...status, id: '1', special_commands: [{ name: 'switch_off', short_name: 'OFF' }] },
+    ]
+  });
   h.start();
   await h.advance(0);
   h.run('showDetail("pc-1")');
@@ -388,9 +400,71 @@ test('pending special commands disable both views and coalesce repeated clicks w
   assert.ok(!h.node('detailSpecialCommands').innerHTML.includes('disabled'));
 });
 
+test('timer extension buttons target the selected timer, add exact seconds, and preserve paused state', async () => {
+  const h = harness([sample('pc'), agent('pc', '1'), agent('pc', '2')]);
+  const agentStatus = (one, two) => ({
+    ...status, remaining_seconds: 300, on_behalf_of: [
+      { ...status, id: '1', remaining_seconds: one, is_running: false },
+      { ...status, id: '2', remaining_seconds: two, is_running: true },
+    ]
+  });
+  h.responses.set('http://pc:18081/status', agentStatus(60, 75));
+  h.start();
+  await h.advance(0);
+  const markup = h.node('dashboardGrid').innerHTML;
+  assert.equal((markup.match(/class="timer-extension"/g) || []).length, 9);
+  for (const label of ['+15 min', '+30 min', '+1 hr']) assert.ok(markup.includes(`>${label}</button>`));
+
+  let expected = 60;
+  for (const amount of [900, 1800, 3600]) {
+    expected += amount;
+    h.responses.set('http://pc:18081/1/tweak', { remaining_seconds: expected });
+    h.responses.set('http://pc:18081/status', agentStatus(expected, 75));
+    await h.run(`extendTimer("pc-1", ${amount})`);
+    const formatted = `${String(Math.floor(expected / 3600)).padStart(2, '0')}:${String(Math.floor((expected % 3600) / 60)).padStart(2, '0')}:${String(expected % 60).padStart(2, '0')}`;
+    assert.equal(h.node('dt-pc-1').textContent, formatted);
+    assert.equal(h.node('dt-pc-2').textContent, '00:01:15');
+    assert.equal(h.node('dt-pc').textContent, '00:05:00');
+    assert.equal(h.node('ds-pc-1').textContent, 'Paused');
+  }
+  const extensions = h.calls.filter(call => call.url === 'http://pc:18081/1/tweak');
+  assert.deepEqual(extensions.map(call => JSON.parse(call.options.body)), [900, 1800, 3600].map(amount => ({ amount })));
+  assert.equal(h.calls.filter(call => call.url.endsWith('/play')).length, 0);
+  assert.equal(h.calls.filter(call => call.url.endsWith('/pause')).length, 0);
+});
+
+test('in-flight timer extension clicks are coalesced and update the cached display immediately', async () => {
+  const h = harness([sample('pc'), agent('pc', '1')]);
+  h.responses.set('http://pc:18081/status', {
+    ...status, on_behalf_of: [
+      { ...status, id: '1', remaining_seconds: 60, is_running: false },
+    ]
+  });
+  h.start();
+  await h.advance(0);
+  h.extensions.push(
+    { dataset: { pc: 'pc-1' }, disabled: false },
+    { dataset: { pc: 'pc-1' }, disabled: false },
+    { dataset: { pc: 'pc-1' }, disabled: false },
+  );
+  h.slow.add('http://pc:18081/1/tweak');
+  h.slow.add('http://pc:18081/status');
+  h.run('extendTimer("pc-1", 900); extendTimer("pc-1", 900);');
+  await flush();
+  const extension = h.calls.filter(call => call.url === 'http://pc:18081/1/tweak');
+  assert.equal(extension.length, 1);
+  assert.ok(h.extensions.every(button => button.disabled));
+  extension[0].resolve({ remaining_seconds: 960 });
+  await flush();
+  assert.equal(h.node('dt-pc-1').textContent, '00:16:00');
+  assert.equal(h.node('ds-pc-1').textContent, 'Paused');
+  assert.ok(h.extensions.every(button => button.disabled));
+});
+
 test('special commands work for active agents when the host timer is unchecked and reject cross-timer names', async () => {
   const h = harness([sample('pc', true), agent('pc', '1')]);
-  h.responses.set('http://pc:18081/status', { ...status,
+  h.responses.set('http://pc:18081/status', {
+    ...status,
     special_commands: [{ name: 'Lock PC', short_name: 'LOCK' }],
     on_behalf_of: [{ ...status, id: '1', special_commands: [{ name: 'switch_off', short_name: 'OFF' }] }],
   });
@@ -404,7 +478,8 @@ test('special commands work for active agents when the host timer is unchecked a
 
 test('special labels refresh from status and clear for missing commands or legacy hosts', async () => {
   const h = harness([sample('pc')]);
-  h.responses.set('http://pc:18081/status', { ...status,
+  h.responses.set('http://pc:18081/status', {
+    ...status,
     special_commands: [null, {}, { name: 'Valid command' }],
   });
   h.start();
@@ -420,7 +495,8 @@ test('special labels refresh from status and clear for missing commands or legac
 
 test('special request timeouts restore buttons and display an error instead of success', async () => {
   const h = harness([sample('pc')]);
-  h.responses.set('http://pc:18081/status', { ...status,
+  h.responses.set('http://pc:18081/status', {
+    ...status,
     special_commands: [{ name: 'switch_off', short_name: 'OFF' }],
   });
   h.start();
@@ -441,7 +517,8 @@ test('unchanged status preserves special button elements despite browser HTML no
     get: () => markup,
     set(value) { markup = value.replace(/\s+/g, ' '); replacements++; },
   });
-  h.responses.set('http://pc:18081/status', { ...status,
+  h.responses.set('http://pc:18081/status', {
+    ...status,
     special_commands: [{ name: 'switch_off', short_name: 'OFF' }],
   });
   h.start();

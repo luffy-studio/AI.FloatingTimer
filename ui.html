@@ -222,6 +222,11 @@
       .mobile-timer-buttons {
         display: none;
       }
+      .timer-extensions {
+        display: flex;
+        gap: 6px;
+        margin-top: 6px;
+      }
       .special-commands {
         display: flex;
         flex-wrap: wrap;
@@ -294,6 +299,7 @@
             "time"
             "status"
             "actions"
+            "extend"
             "special"
             "compact";
           gap: 3px;
@@ -371,6 +377,18 @@
           grid-area: special;
           margin-top: 0;
           gap: 4px;
+        }
+        .dashboard-card .timer-extensions {
+          grid-area: extend;
+          display: grid;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          gap: 4px;
+          margin-top: 0;
+        }
+        .dashboard-card .timer-extensions button {
+          min-height: 30px;
+          padding: 3px 4px;
+          font-size: 12px;
         }
         .special-commands button {
           min-height: 32px;
@@ -561,6 +579,7 @@
       const pendingActive = new Map(),
         pendingRequests = new Map(),
         pendingSpecial = new Set(),
+        pendingExtensions = new Set(),
         hostPollers = new Map();
       let listPromise = null;
       const $ = (id) => document.getElementById(id);
@@ -796,6 +815,20 @@
           <button title="Hide TIME UP" aria-label="Hide TIME UP" onclick="quick(${argument(id)}, ${argument("hide")})">H</button>
         </span>`;
       }
+      function timerExtensionButtons(p) {
+        return `<div class="timer-extensions">${[
+          ["+15 min", 900],
+          ["+30 min", 1800],
+          ["+1 hr", 3600],
+        ].map(([label, seconds]) => `<button class="timer-extension" data-pc="${esc(p.id)}"
+          ${pendingExtensions.has(p.id) ? "disabled" : ""}
+          onclick="extendTimer(${argument(p.id)}, ${seconds})">${label}</button>`).join("")}</div>`;
+      }
+      function setExtensionButtons(id, disabled) {
+        document.querySelectorAll(".timer-extension").forEach(button => {
+          if (button.dataset.pc === String(id)) button.disabled = disabled;
+        });
+      }
       function updateToggle(id, isRunning) {
         document.querySelectorAll(".mobile-toggle").forEach((button) => {
           if (button.dataset.pc === String(id)) {
@@ -817,6 +850,7 @@
           <div id="dt-${id}" class="dashboard-time">--:--:--</div>
           <div id="ds-${id}" class="status">Checking...</div>
           <div class="row" style="margin-top:10px">${timerButtons(p.id)}</div>
+          ${timerExtensionButtons(p)}
           <div id="special-${id}" class="special-commands" hidden></div>
           <div id="seen-${id}" class="hint"></div>
           <div class="compact"><div class="row">
@@ -1037,6 +1071,55 @@
       }
       function renderHostStatuses(address, poller, full = false) {
         for (const p of hostSystems(address)) renderCachedStatus(p.id, poller, full);
+      }
+      function cacheTimerRemaining(p, poller, remaining) {
+        if (!Number.isSafeInteger(remaining) || remaining < 0 || !poller?.sample) return;
+        const { status } = poller.sample;
+        if (!timerID(p)) {
+          poller.sample = {
+            ...poller.sample,
+            status: { ...status, remaining_seconds: remaining },
+            receivedAt: performance.now(),
+          };
+          return;
+        }
+        if (!Array.isArray(status.on_behalf_of)) return;
+        const index = status.on_behalf_of.findIndex(timer => timer && String(timer.id) === timerID(p));
+        if (index < 0) return;
+        const timers = [...status.on_behalf_of];
+        timers[index] = { ...timers[index], remaining_seconds: remaining };
+        poller.sample = {
+          ...poller.sample,
+          status: { ...status, on_behalf_of: timers },
+          receivedAt: performance.now(),
+        };
+      }
+      async function extendTimer(id, seconds) {
+        const p = pcs.find(p => p.id === id);
+        if (!Number.isSafeInteger(seconds) || seconds <= 0 || !isActive(p) || pendingExtensions.has(id)) return;
+        pendingExtensions.add(id);
+        setExtensionButtons(id, true);
+        try {
+          const result = await pcRequest(id, "tweak", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ amount: seconds }),
+          });
+          const current = pcs.find(p => p.id === id);
+          if (isActive(current)) {
+            const address = hostAddress(current);
+            const poller = hostPollers.get(address);
+            cacheTimerRemaining(current, poller, result.remaining_seconds);
+            if (poller) renderHostStatuses(address, poller, true);
+            await pollOne(current);
+          }
+        } catch (e) {
+          const target = id === selected ? $("msg") : $("dm-" + id);
+          if (target) target.textContent = e.message;
+        } finally {
+          pendingExtensions.delete(id);
+          setExtensionButtons(id, false);
+        }
       }
       function renderCachedStatus(id, poller, full = false) {
         const p = pcs.find(p => p.id === id);
