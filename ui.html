@@ -136,6 +136,7 @@
         background: #fff;
         color: var(--text);
       }
+      .field-invalid { border-color: #c83b3b !important; box-shadow: 0 0 0 2px rgba(200,59,59,.12); }
       button {
         cursor: pointer;
       }
@@ -576,7 +577,7 @@
                 <select id="sessionCategory" onchange="renderBillingForm()"></select>
               </div>
               <div>
-                <label for="sessionCustomer">Customer name</label>
+                <label for="sessionCustomer">Customer name <span aria-hidden="true">*</span></label>
                 <input id="sessionCustomer" placeholder="Customer" maxlength="120" required />
               </div>
               <div>
@@ -1627,7 +1628,8 @@
         const pcID = $("sessionSystem").value;
         const customer = $("sessionCustomer").value.trim();
         if (!pcID) { $("sessionMessage").textContent = "Select an active gaming system."; return; }
-        if (!customer) { $("sessionMessage").textContent = "Customer name is required."; $("sessionCustomer").focus(); return; }
+        if (!customer) { $("sessionMessage").textContent = "Please enter the customer name before starting the session."; $("sessionCustomer").classList.add("field-invalid"); $("sessionCustomer").focus(); return; }
+        $("sessionCustomer").classList.remove("field-invalid");
         button.disabled = true;
         button.setAttribute("aria-busy", "true");
         $("sessionMessage").textContent = "Starting the selected system timer...";
@@ -1644,6 +1646,7 @@
             }),
           });
           $("sessionMessage").textContent = `Session ${x.id} started on ${x.pc_name}.`;
+          $("sessionCustomer").value = "";
           await Promise.all([loadBilling(), refreshNow()]);
         } catch(e) {
           $("sessionMessage").textContent = e.message;

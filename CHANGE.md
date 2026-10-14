@@ -62,3 +62,11 @@
 - **Implementation details:** Restored the `node --test` source header; no production timer, workbook, or overlay code changed.
 - **Tests performed and actual results:** `node --test ui_polling_test.cjs` passed 23/23; `go test -buildvcs=false .` passed.
 - **Known issues or pending work:** Native Fyne overlay expiry was not visually tested on a real gaming PC. Generated workbook artifacts are not committed.
+
+## 2026-10-14 13:38:00 - Required Customer Name Validation
+
+- **Files modified:** `billing.go`, `ui.html`, `CHANGE.md`.
+- **Reason:** Prevent blank or whitespace-only customer names from starting timers or creating billing sessions.
+- **Implementation details:** Frontend trims the field, shows the required message, focuses and highlights the input, and clears it only after confirmed success. Backend uses the same trim and message, preserving direct API protection before timer or workbook operations.
+- **Tests performed and actual results:** `go test -buildvcs=false .` passed; `node --test ui_polling_test.cjs` passed 23/23; `git diff --check` passed.
+- **Known issues or pending work:** The existing automated timer tests use controlled HTTP endpoints. A live native overlay visual check on a gaming PC remains outstanding.

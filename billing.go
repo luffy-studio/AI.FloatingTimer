@@ -630,7 +630,7 @@ func (s *BillingStore) prepareStart(q StartSessionRequest) (Session, PC, error) 
 	}
 	q.CustomerName = strings.TrimSpace(q.CustomerName)
 	if q.CustomerName == "" {
-		return Session{}, PC{}, errors.New("customer name is required")
+		return Session{}, PC{}, errors.New("Please enter the customer name before starting the session.")
 	}
 	if len(q.CustomerName) > 120 {
 		return Session{}, PC{}, errors.New("customer name is too long")
