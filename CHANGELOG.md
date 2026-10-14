@@ -43,3 +43,7 @@ x# Changelog
 - **Tests:** `gofmt -w billing.go` completed; `go test -buildvcs=false .` passed (`ok overlay-timer 0.616s`); `node --test ui_polling_test.cjs` passed (23 of 23).
 - **Known limitations:** The visible Excel export button cannot attach the bearer-token header when a remote billing token is configured; download therefore works from the admin machine by default. Per-card active customer/bill summaries, date/system filters, and direct Add Time in the active-bill panel remain incomplete.
 - **Status:** In progress.
+
+## 2026-10-14 13:31 +05:30 - Audit Log Location
+
+- New task-level entries are now maintained in `CHANGE.md` as requested. Existing `CHANGELOG.md` history is preserved unchanged.

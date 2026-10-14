@@ -54,3 +54,11 @@
 - **Implementation details:** Ran `go mod tidy`; Excelize is a direct dependency and the unused SQLite driver/checksums are no longer present. Historical `CHANGELOG.md` entries were preserved.
 - **Tests performed and actual results:** After cleanup, `go test -buildvcs=false ./...` passed for both Go packages; `node --test ui_polling_test.cjs` passed 23/23; isolated `build.ps1` built both executables; `git diff --check` passed; a source/manifest search found no SQLite references.
 - **Known issues or pending work:** The open production billing session remains untouched. Production workbook migration, restart, live UI/API and timer-expiry verification are deferred until that session is closed. The source commit will not claim those runtime checks passed.
+
+## 2026-10-14 13:33:00 - Restore browser regression test
+
+- **Files modified:** `ui_polling_test.cjs`, `CHANGE.md`.
+- **Reason:** Remove invalid JSON prepended to the JavaScript test file.
+- **Implementation details:** Restored the `node --test` source header; no production timer, workbook, or overlay code changed.
+- **Tests performed and actual results:** `node --test ui_polling_test.cjs` passed 23/23; `go test -buildvcs=false .` passed.
+- **Known issues or pending work:** Native Fyne overlay expiry was not visually tested on a real gaming PC. Generated workbook artifacts are not committed.
