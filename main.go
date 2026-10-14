@@ -140,6 +140,7 @@ type AppConfig struct {
 	FriendlyName          string                 `json:"friendly_name"`
 	TimerPort             int                    `json:"timer_port"`
 	UIDiscoveryPort       int                    `json:"ui_discovery_port"`
+	Billing               BillingConfig          `json:"billing"`
 	Discovery             DiscoveryConfig        `json:"discovery"`
 	OnBehalfOf            []OnBehalfConfig       `json:"on_behalf_of"`
 	SpecialCommands       []SpecialCommandConfig `json:"special_commands"`
@@ -154,6 +155,7 @@ func defaultAppConfig() AppConfig {
 		ForceKillAfterSeconds: 2,
 		TimerPort:             DefaultTimerPort,
 		UIDiscoveryPort:       DefaultUIPort,
+		Billing:               BillingConfig{Enabled: false},
 		SpecialCommands:       []SpecialCommandConfig{},
 		CommandTimeoutSeconds: 10,
 		Discovery: DiscoveryConfig{
@@ -361,6 +363,7 @@ func normalizeAppConfig() {
 	if appConfig.ForceKillAfterSeconds < 0 {
 		appConfig.ForceKillAfterSeconds = 0
 	}
+	normalizeBillingConfig()
 }
 
 func configuredFriendlyName() string {

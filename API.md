@@ -545,3 +545,27 @@ metadata and survives edits, imports, and restarts. Failed saves roll back memor
 Discovery still probes the configured timer port; differently configured remote timer
 ports need manual registration or an existing peer record. A discovery observation
 older than 15 minutes is marked stale, without deleting the record.
+
+## Billing sessions
+
+The manager exposes `GET /api/sessions` for session history and `POST /api/sessions`
+to start a billed session. A start request includes `pc_id`, `category`,
+`customer_name`, `players`, and `duration_minutes`. The server resolves the selected
+system's registered address, reads its existing timer status, sets the purchased
+duration, and starts that timer before persisting the session. Numeric path suffixes
+such as `/1` are preserved, so a virtual timer is not confused with its host.
+
+The server rejects duplicate open sessions and reports timer errors instead of
+recording a failed start as successful. If the timer command or workbook write fails
+after the timer has been changed, the server attempts to restore the timer's prior
+remaining time, running state, and overlay visibility; a failed restoration is
+reported explicitly.
+
+The manager's `billing.xlsx` workbook has a `Sessions` worksheet with the visible
+columns `Date`, `Time`, `Customer`, `System`, `Players`, `Start Time`,
+`Purchased Minutes`, and `Amount Paid`. Date/time cells use Excel date/time values
+with `DD-MM-YYYY` and `HH:MM:SS` display formats. New sessions record the rate-card
+price as `Amount Paid` at start, per the operator's configured billing workflow.
+Session identifiers and fields needed by the API are stored in row comments rather
+than extra worksheet columns. Existing session and payment data is migrated after a
+workbook backup; payment history is retained in the associated session metadata.

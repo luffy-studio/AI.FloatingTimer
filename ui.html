@@ -240,6 +240,97 @@
         max-width: 100%;
         overflow-wrap: anywhere;
       }
+      .brand {
+        display: grid;
+        gap: 2px;
+      }
+      .brand small {
+        color: var(--muted);
+      }
+      .metrics {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(110px, 1fr));
+        gap: 10px;
+        margin-bottom: 16px;
+      }
+      .metric {
+        background: #fff;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 12px;
+      }
+      .metric b {
+        display: block;
+        font-size: 20px;
+        margin-top: 4px;
+        font-variant-numeric: tabular-nums;
+      }
+      .workbench {
+        display: grid;
+        grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.8fr);
+        gap: 16px;
+        margin-bottom: 16px;
+      }
+      .form-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px 12px;
+      }
+      .form-grid input,
+      .form-grid select {
+        width: 100%;
+      }
+      .billing-summary {
+        display: grid;
+        gap: 8px;
+        margin-top: 10px;
+      }
+      .billing-line {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        border-bottom: 1px solid #edf1f5;
+        padding-bottom: 6px;
+      }
+      .table-wrap {
+        overflow-x: auto;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+      th,
+      td {
+        border-bottom: 1px solid var(--line);
+        padding: 9px 8px;
+        text-align: left;
+        white-space: nowrap;
+      }
+      th {
+        color: var(--muted);
+        font-weight: 600;
+        background: #f8fafc;
+      }
+      .price-list {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+        gap: 10px;
+        margin-top: 10px;
+      }
+      .price-group {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 10px;
+        background: #f8fafc;
+      }
+      .price-group b {
+        display: block;
+        margin-bottom: 6px;
+      }
+      .billing-disabled {
+        border-color: #f1c4c8;
+        background: #fff8f8;
+      }
       #settingsDialog {
         min-width: 0;
         width: min(440px, calc(100vw - 24px));
@@ -265,6 +356,11 @@
         .header-actions button {
           padding: 6px;
           font-size: 12px;
+        }
+        .metrics,
+        .workbench,
+        .form-grid {
+          grid-template-columns: 1fr;
         }
         .layout,
         .detail-grid {
@@ -431,12 +527,15 @@
   </head>
   <body>
     <header>
-      <h1>Overlay Timer Manager</h1>
+      <div class="brand">
+        <h1>Paradise Gaming</h1>
+        <small>AI.FloatingTimer</small>
+      </div>
       <div class="header-actions">
         <button onclick="openPC()">Add system</button>
         <button id="discoverButton" class="primary" onclick="discoverNow()">Discover</button>
         <button id="distributeButton" onclick="distributeNow()">Distribute</button>
-        <button id="refreshButton" class="primary" onclick="refreshNow()">⚡ Force Refresh</button>
+        <button id="refreshButton" class="primary" onclick="refreshNow()">Force Refresh</button>
         <button onclick="showDashboard()">Dashboard</button>
         <button onclick="openSettings()">Settings</button>
       </div>
@@ -451,6 +550,71 @@
         <div id="activePCs" class="list"></div>
       </details>
       <section id="dashboard">
+        <div class="metrics">
+          <div class="metric"><span class="hint">Total systems</span><b id="metricTotal">0</b></div>
+          <div class="metric"><span class="hint">Running</span><b id="metricRunning">0</b></div>
+          <div class="metric"><span class="hint">Paused</span><b id="metricPaused">0</b></div>
+          <div class="metric"><span class="hint">Offline</span><b id="metricOffline">0</b></div>
+          <div class="metric"><span class="hint">Today collected</span><b id="metricRevenue">--</b></div>
+        </div>
+        <div id="billingStatus" class="panel billing-disabled" style="margin-bottom:16px" hidden></div>
+        <div class="workbench">
+          <section class="panel">
+            <div class="top">
+              <div>
+                <h2>New session</h2>
+                <div class="hint">Creates billing history on the admin PC only</div>
+              </div>
+            </div>
+            <div class="form-grid">
+              <div>
+                <label for="sessionSystem">Gaming system</label>
+                <select id="sessionSystem" onchange="billingChanged(); loadCurrentBill()"></select>
+              </div>
+              <div>
+                <label for="sessionCategory">Category</label>
+                <select id="sessionCategory" onchange="renderBillingForm()"></select>
+              </div>
+              <div>
+                <label for="sessionCustomer">Customer name</label>
+                <input id="sessionCustomer" placeholder="Customer" maxlength="120" required />
+              </div>
+              <div>
+                <label for="sessionPlayers">Players</label>
+                <select id="sessionPlayers" onchange="renderBillingForm()"></select>
+              </div>
+              <div>
+                <label for="sessionDuration">Duration</label>
+                <select id="sessionDuration" onchange="billingChanged()"></select>
+              </div>
+              <div>
+                <label>Start time</label>
+                <div class="hint">Captured when the system timer starts</div>
+              </div>
+            </div>
+            <div class="billing-summary">
+              <div class="billing-line"><span>Selected price</span><b id="selectedPrice">--</b></div>
+              <div class="billing-line"><span>Estimated bill</span><b id="estimatedBill">--</b></div>
+            </div>
+            <div class="row" style="justify-content:flex-end;margin-top:14px">
+              <button id="startSessionButton" class="primary" onclick="startBillingSession()">Session Start</button>
+            </div>
+            <div id="sessionMessage" class="msg"></div>
+          </section>
+          <section class="panel">
+            <div class="top">
+              <div>
+                <h2>Current bill</h2>
+                <div class="hint">Selected system's open session</div>
+              </div>
+            </div>
+            <div id="currentBill" class="billing-summary"></div>
+            <div class="row" style="justify-content:flex-end;margin-top:14px">
+              <button id="currentPaidButton" onclick="markCurrentPaid()" disabled>Mark Paid</button>
+              <button id="currentCloseButton" class="primary" onclick="closeCurrentSession()" disabled>Close Session</button>
+            </div>
+          </section>
+        </div>
         <div class="top">
           <div>
             <h2>All systems</h2>
@@ -458,6 +622,36 @@
           </div>
         </div>
         <div id="dashboardGrid" class="dashboard-grid" style="margin-top: 16px"></div>
+        <section class="panel" style="margin-top:16px">
+          <h2>Price list</h2>
+          <div id="priceList" class="price-list"></div>
+        </section>
+        <section class="panel" style="margin-top:16px">
+          <div class="top">
+            <div>
+              <h2>Session history</h2>
+              <div class="hint">Loaded from the admin PC billing workbook</div>
+            </div>
+            <div class="row">
+              <input id="historySearch" placeholder="Search" oninput="loadHistory()" />
+              <select id="historyPayment" onchange="loadHistory()">
+                <option value="">All payments</option>
+                <option value="unpaid">Unpaid</option>
+                <option value="partial">Partial</option>
+                <option value="paid">Paid</option>
+              </select>
+              <button onclick="backupBilling()">Backup</button>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>Session</th><th>System</th><th>Customer</th><th>Players</th><th>Start</th><th>End</th><th>Duration</th><th>Amount</th><th>Payment</th><th></th></tr>
+              </thead>
+              <tbody id="historyRows"></tbody>
+            </table>
+          </div>
+        </section>
       </section>
       <section id="detail" hidden>
         <button onclick="showDashboard()">← Dashboard</button>
@@ -798,6 +992,7 @@
         $("dashboardGrid").innerHTML = activePCs().length
           ? activePCs().map(cardHTML).join("")
           : '<div class="panel empty">No active systems. Select systems above, add a system, or use Discover.</div>';
+        renderBillingForm();
         renderCachedStatuses();
       }
       function timerButtons(id) {
@@ -1310,8 +1505,175 @@
           button.disabled = false;
         }
       }
+      let billingCatalog = { currency: "INR", entries: [] };
+      let currentBillingSession = null;
+      function billingHeaders() {
+        const token = sessionStorage.getItem("billing-token") || "";
+        return token ? { "X-Billing-Token": token } : {};
+      }
+      async function billingRequest(url, options = {}) {
+        options.headers = { ...billingHeaders(), ...(options.headers || {}) };
+        try { return await request(url, options); }
+        catch (e) {
+          if (String(e.message).includes("authorization")) {
+            const token = prompt("Enter the billing admin token");
+            if (token) { sessionStorage.setItem("billing-token", token); return billingRequest(url, options); }
+          }
+          throw e;
+        }
+      }
+      function money(value) { return "INR " + Number(value || 0).toLocaleString(); }
+      function renderPriceList() {
+        const groups = new Map();
+        for (const entry of billingCatalog.entries) {
+          if (!groups.has(entry.category)) groups.set(entry.category, []);
+          groups.get(entry.category).push(entry);
+        }
+        $("priceList").innerHTML = [...groups].map(([category, entries]) =>
+          `<div class="price-group"><b>${esc(category)}</b>${entries.map(entry =>
+            `<div class="billing-line"><span>${entry.players} player(s) · ${entry.duration_minutes} min</span><b>${money(entry.amount)}</b></div>`
+          ).join("")}</div>`
+        ).join("") || '<div class="hint">Price list unavailable.</div>';
+      }
+      function billingChanged() {
+        const category = $("sessionCategory").value, players = Number($("sessionPlayers").value), duration = Number($("sessionDuration").value);
+        const entry = billingCatalog.entries.find(e => e.category === category && e.players === players && e.duration_minutes === duration);
+        $("selectedPrice").textContent = entry ? money(entry.amount) : "Not listed";
+        $("estimatedBill").textContent = entry ? money(entry.amount) : "--";
+      }
+      function renderBillingForm() {
+        const previousSystem = $("sessionSystem").value;
+        const previousCategory = $("sessionCategory").value;
+        const previousPlayers = $("sessionPlayers").value;
+        const previousDuration = $("sessionDuration").value;
+        const systems = activePCs();
+        $("sessionSystem").innerHTML = systems.map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join("");
+        if (systems.some(p => p.id === previousSystem)) $("sessionSystem").value = previousSystem;
+        const categories = [...new Set(billingCatalog.entries.map(e => e.category))];
+        $("sessionCategory").innerHTML = categories.map(v => `<option>${esc(v)}</option>`).join("");
+        if (categories.includes(previousCategory)) $("sessionCategory").value = previousCategory;
+        const players = [...new Set(billingCatalog.entries.filter(e => e.category === $("sessionCategory").value).map(e => e.players))];
+        $("sessionPlayers").innerHTML = players.map(v => `<option value="${v}">${v}</option>`).join("");
+        if (players.includes(Number(previousPlayers))) $("sessionPlayers").value = previousPlayers;
+        const durations = billingCatalog.entries.filter(e => e.category === $("sessionCategory").value && e.players === Number($("sessionPlayers").value)).map(e => e.duration_minutes);
+        $("sessionDuration").innerHTML = durations.map(v => `<option value="${v}">${v} min</option>`).join("");
+        if (durations.includes(Number(previousDuration))) $("sessionDuration").value = previousDuration;
+        billingChanged();
+        if (billingCatalog.entries.length && previousSystem !== $("sessionSystem").value) loadCurrentBill();
+      }
+      function renderCurrentBill(session) {
+        currentBillingSession = session || null;
+        const due = currentBillingSession
+          ? Math.max(0, Number(currentBillingSession.final_amount) - Number(currentBillingSession.amount_paid))
+          : 0;
+        $("currentPaidButton").disabled = !currentBillingSession || due === 0;
+        $("currentCloseButton").disabled = !currentBillingSession;
+        $("startSessionButton").disabled = !!currentBillingSession;
+        if (!currentBillingSession) {
+          $("currentBill").innerHTML = '<div class="hint">No open billing session for this system.</div>';
+          return;
+        }
+        const duration = Number(session.purchased_minutes) + Number(session.additional_minutes);
+        const lines = [
+          ["Customer", session.customer_name || "—"],
+          ["Service", `${session.category} · ${session.players} player(s)`],
+          ["Started", session.started_at],
+          ["Expected end", session.expected_end_at],
+          ["Duration", `${duration} min`],
+          ["Amount paid", money(session.amount_paid)],
+          ["Amount due", money(due)],
+          ["Payment", session.payment_status],
+        ];
+        $("currentBill").innerHTML = lines.map(([label, value]) =>
+          `<div class="billing-line"><span>${esc(label)}</span><b>${esc(value)}</b></div>`
+        ).join("");
+      }
+      async function loadCurrentBill() {
+        const pcID = $("sessionSystem").value;
+        if (!pcID) {
+          renderCurrentBill(null);
+          $("currentBill").innerHTML = '<div class="hint">Select an active system to view its bill.</div>';
+          return;
+        }
+        try {
+          const sessions = await billingRequest("/api/sessions");
+          if ($("sessionSystem").value !== pcID) return;
+          const session = (Array.isArray(sessions) ? sessions : []).find(x => x.pc_id === pcID && x.status === "open");
+          renderCurrentBill(session);
+        } catch (e) {
+          if ($("sessionSystem").value !== pcID) return;
+          renderCurrentBill(null);
+          $("currentBill").innerHTML = `<div class="hint">${esc(e.message)}</div>`;
+        }
+      }
+      async function markCurrentPaid() {
+        if (currentBillingSession) await sessionAction(currentBillingSession.id, "pay");
+      }
+      async function closeCurrentSession() {
+        if (currentBillingSession) await sessionAction(currentBillingSession.id, "close");
+      }
+      async function loadBilling() {
+        try {
+          const catalog = await request("/api/pricing"); billingCatalog = Array.isArray(catalog.entries) ? catalog : billingCatalog;
+          renderPriceList(); renderBillingForm(); await loadHistory();
+          const summary = await billingRequest("/api/billing/summary"); $("metricRevenue").textContent = summary.enabled ? money(summary.today_collected) : "--";
+          $("billingStatus").hidden = !!summary.enabled; $("billingStatus").textContent = summary.configuration_status || "Billing is disabled on this machine.";
+          await loadCurrentBill();
+        } catch (e) { $("billingStatus").hidden=false; $("billingStatus").textContent="Billing unavailable: "+e.message; }
+      }
+      async function startBillingSession() {
+        const button = $("startSessionButton");
+        if (button.disabled) return;
+        const pcID = $("sessionSystem").value;
+        const customer = $("sessionCustomer").value.trim();
+        if (!pcID) { $("sessionMessage").textContent = "Select an active gaming system."; return; }
+        if (!customer) { $("sessionMessage").textContent = "Customer name is required."; $("sessionCustomer").focus(); return; }
+        button.disabled = true;
+        button.setAttribute("aria-busy", "true");
+        $("sessionMessage").textContent = "Starting the selected system timer...";
+        try {
+          const x = await billingRequest("/api/sessions", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              pc_id: pcID,
+              category: $("sessionCategory").value,
+              customer_name: customer,
+              players: Number($("sessionPlayers").value),
+              duration_minutes: Number($("sessionDuration").value),
+            }),
+          });
+          $("sessionMessage").textContent = `Session ${x.id} started on ${x.pc_name}.`;
+          await Promise.all([loadBilling(), refreshNow()]);
+        } catch(e) {
+          $("sessionMessage").textContent = e.message;
+        } finally {
+          button.removeAttribute("aria-busy");
+          button.disabled = !!currentBillingSession;
+        }
+      }
+      async function loadHistory() {
+        try {
+          const query = new URLSearchParams({
+            search: $("historySearch").value,
+            payment_status: $("historyPayment").value,
+          });
+          const rows = await billingRequest("/api/sessions?" + query.toString());
+          $("historyRows").innerHTML = (Array.isArray(rows) ? rows : []).map(x => {
+            const payButton = x.final_amount > x.amount_paid
+              ? `<button onclick="sessionAction('${esc(x.id)}','pay')">Paid</button> `
+              : "";
+            return `<tr><td>${esc(x.id)}</td><td>${esc(x.pc_name)}</td><td>${esc(x.customer_name)}</td><td>${x.players}</td><td>${esc(x.started_at)}</td><td>${esc(x.ended_at || x.expected_end_at)}</td><td>${x.purchased_minutes + x.additional_minutes} min</td><td>${money(x.final_amount)}</td><td>${esc(x.payment_status)}</td><td>${payButton}<button onclick="sessionAction('${esc(x.id)}','close')">Close</button></td></tr>`;
+          }).join("") || "<tr><td colspan='10'>No billing sessions recorded.</td></tr>";
+        } catch(e) {
+          $("historyRows").innerHTML = `<tr><td colspan='10'>${esc(e.message)}</td></tr>`;
+        }
+      }
+      async function sessionAction(id, action) { try { await billingRequest("/api/sessions/"+encodeURIComponent(id)+"/"+action,{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"}); await loadBilling(); } catch(e) { alert(e.message); } }
+      function backupBilling() { window.location.href="/api/billing/download"; }
       restoreSettings();
       refreshSavedList();
+      loadBilling();
       setInterval(refreshSavedList, 15000);
       setInterval(falsePollingTick, 1000);
     </script>
