@@ -31,7 +31,7 @@ x# Changelog
 - **Changes:** Added `github.com/xuri/excelize/v2 v2.11.0`; replaced SQLite-specific persistence with an admin-PC `billing.xlsx` workbook containing `Sessions`, `Payments`, and `Daily Summary` sheets; added workbook validation, in-process write serialization, pre-write backups, temporary save/replacement, session validation, duplicate open-session prevention, searchable session retrieval, protected workbook download, and optional billing bearer-token authorization.
 - **Existing functionality preserved:** Timer algorithms, timer endpoints, PC discovery, timeout overlay, existing PC records, ports, and client timer protocol were not changed.
 - **Tests:** `gofmt -w billing.go` completed. `go test -buildvcs=false .` passed (`ok overlay-timer 0.583s`).
-- **Known limitations:** Browser-side billing controls and complete payment, time-extension, close-session, date-filter, and daily-summary mutation flows remain under implementation. The existing dashboard is still unauthenticated outside billing routes; configure `billing.admin_token` before exposing billing routes beyond the admin machine.
+- **Known limitations:** Browser-side billing controls and complete payment, time-extension, close-session, date-filter, and daily-summary mutation flows remain under implementation. The API is unauthenticated, including billing routes; restrict access to trusted networks or use an authenticated HTTPS proxy.
 - **Status:** In progress.
 
 ## 2026-10-14 13:18 +05:30 - Unified Excel Billing Dashboard

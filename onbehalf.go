@@ -144,6 +144,7 @@ func registerOnBehalfHandlers(mux *http.ServeMux) {
 		registerTimerCommands(mux, prefix, timer.applyAction)
 		owner := localRegistryPC()
 		owner.ID, owner.Name, owner.Address = id, timer.Config.Name, owner.Address+prefix
+		setBillingSessionLinkHandler(mux, prefix+"/billing-session", owner.Address)
 		registerSpecialCommands(mux, prefix, timer.Config.SpecialCommands, timer.Config.CommandTimeoutSeconds, owner, &timer.activity)
 	}
 }

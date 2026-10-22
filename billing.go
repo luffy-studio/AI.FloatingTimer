@@ -4,12 +4,16 @@ package main
 
 import (
 	"bytes"
-	"crypto/subtle"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -26,7 +30,6 @@ type BillingConfig struct {
 	Enabled         bool   `json:"enabled"`
 	WorkbookPath    string `json:"workbook_path"`
 	BackupDirectory string `json:"backup_directory"`
-	AdminToken      string `json:"admin_token"`
 }
 type Session struct {
 	ID                string `json:"id"`
@@ -52,12 +55,116 @@ type Session struct {
 	UpdatedAt         string `json:"updated_at"`
 	payments          []paymentRecord
 }
-type paymentRecord struct {
-	ID        string `json:"id"`
-	Timestamp string `json:"timestamp"`
-	Amount    int    `json:"amount"`
-	Status    string `json:"status"`
+type billingSessionLink struct {
+	SessionID       string `json:"session_id"`
+	PCAddress       string `json:"pc_address"`
+	ManagerEndpoint string `json:"manager_endpoint"`
 }
+type paymentRecord struct {
+	ID               string `json:"id"`
+	Timestamp        string `json:"timestamp"`
+	Amount           int    `json:"amount"`
+	Status           string `json:"status"`
+	ExtensionMinutes int    `json:"extension_minutes,omitempty"`
+	RemainingSeconds int    `json:"remaining_seconds,omitempty"`
+}
+
+var billingSessionLinks = struct {
+	sync.RWMutex
+	items map[string]billingSessionLink
+}{items: make(map[string]billingSessionLink)}
+
+func billingSessionLinkForEndpoint(address string) (billingSessionLink, bool) {
+	billingSessionLinks.RLock()
+	defer billingSessionLinks.RUnlock()
+	link, ok := billingSessionLinks.items[normalizeSessionAddress(address)]
+	return link, ok
+}
+
+func billingManagerEndpoint() (string, error) {
+	manager := localRegistryPC()
+	endpoint, err := url.Parse(manager.Address)
+	if err != nil {
+		return "", err
+	}
+	if endpoint.Hostname() == "" || appConfig.UIDiscoveryPort < 1 {
+		return "", errors.New("billing manager endpoint is not configured")
+	}
+	return "http://" + net.JoinHostPort(endpoint.Hostname(), strconv.Itoa(appConfig.UIDiscoveryPort)) + "/internal/api/sessions/extend", nil
+}
+
+func setBillingSessionLinkHandler(mux *http.ServeMux, path, pcAddress string) {
+	mux.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost && r.Method != http.MethodDelete {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "POST or DELETE required"})
+			return
+		}
+		var link billingSessionLink
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&link); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid billing session link"})
+			return
+		}
+		key := normalizeSessionAddress(pcAddress)
+		if normalizeSessionAddress(link.PCAddress) != key || key == "" || link.SessionID == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "billing session link does not match this timer endpoint"})
+			return
+		}
+		endpoint, err := url.Parse(link.ManagerEndpoint)
+		if err != nil || (endpoint.Scheme != "http" && endpoint.Scheme != "https") ||
+			endpoint.Host == "" || endpoint.User != nil || endpoint.Path != "/internal/api/sessions/extend" ||
+			endpoint.RawQuery != "" || !requestOriginMatchesPC(r.RemoteAddr, link.ManagerEndpoint) {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "billing manager endpoint does not match the request origin"})
+			return
+		}
+		if r.Method == http.MethodPost {
+			billingSessionLinks.Lock()
+			billingSessionLinks.items[key] = link
+			billingSessionLinks.Unlock()
+		} else {
+			billingSessionLinks.Lock()
+			if current, exists := billingSessionLinks.items[key]; exists && current.SessionID == link.SessionID {
+				delete(billingSessionLinks.items, key)
+			}
+			billingSessionLinks.Unlock()
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "success"})
+	})
+}
+
+func updateBillingSessionLink(pc PC, sessionID string, remove bool) error {
+	managerEndpoint, err := billingManagerEndpoint()
+	if err != nil {
+		return fmt.Errorf("could not resolve billing manager endpoint: %w", err)
+	}
+	link := billingSessionLink{SessionID: sessionID, PCAddress: pc.Address, ManagerEndpoint: managerEndpoint}
+	payload, err := json.Marshal(link)
+	if err != nil {
+		return err
+	}
+	method := http.MethodPost
+	if remove {
+		method = http.MethodDelete
+	}
+	request, err := http.NewRequest(method, timerEndpoint(pc.Address, "billing-session"), bytes.NewReader(payload))
+	if err != nil {
+		return err
+	}
+	request.Header.Set("Content-Type", "application/json")
+	response, err := timerHTTP.Do(request)
+	if err != nil {
+		return fmt.Errorf("could not configure billing synchronization on %s: %w", pc.Name, err)
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(response.Body, 64<<10))
+	if err != nil {
+		return err
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return fmt.Errorf("timer endpoint returned HTTP %d while configuring billing synchronization: %s", response.StatusCode, strings.TrimSpace(string(body)))
+	}
+	return nil
+}
+
 type sessionMetadata struct {
 	Version  int             `json:"version"`
 	Session  Session         `json:"session"`
@@ -78,9 +185,9 @@ type StartSessionRequest struct {
 	StartedAt       string `json:"started_at"`
 }
 type BillingStore struct {
-	mu                     sync.Mutex
-	enabled                bool
-	path, backupDir, token string
+	mu              sync.Mutex
+	enabled         bool
+	path, backupDir string
 }
 
 var billingStore BillingStore
@@ -102,7 +209,6 @@ func (s *BillingStore) open(c BillingConfig) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.enabled = c.Enabled
-	s.token = c.AdminToken
 	if !c.Enabled {
 		return nil
 	}
@@ -586,7 +692,7 @@ func (s *BillingStore) require() error {
 	}
 	return nil
 }
-func (s *BillingStore) sessions(search, payment string) ([]Session, error) {
+func (s *BillingStore) sessions(search, payment string, statusFilter ...string) ([]Session, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.require(); err != nil {
@@ -603,7 +709,14 @@ func (s *BillingStore) sessions(search, payment string) ([]Session, error) {
 	}
 	var out []Session
 	search = strings.ToLower(strings.TrimSpace(search))
+	status := ""
+	if len(statusFilter) > 0 {
+		status = statusFilter[0]
+	}
 	for _, x := range rows {
+		if status != "" && x.Status != status {
+			continue
+		}
 		if payment != "" && x.PaymentStatus != payment {
 			continue
 		}
@@ -656,9 +769,12 @@ func (s *BillingStore) prepareStart(q StartSessionRequest) (Session, PC, error) 
 			return Session{}, PC{}, apiError(http.StatusConflict, errors.New("system already has an open session"))
 		}
 	}
-	now := time.Now()
+	sessionID, err := newSessionID()
+	if err != nil {
+		return Session{}, PC{}, fmt.Errorf("could not generate a session ID: %w", err)
+	}
 	x := Session{
-		ID: "S-" + now.UTC().Format("20060102150405.000000000"), PCID: pc.ID,
+		ID: sessionID, PCID: pc.ID,
 		PCName: pc.Name, PCAddress: pc.Address, Category: q.Category,
 		CustomerName: q.CustomerName, Players: q.Players, Status: "open",
 		PurchasedMinutes: q.DurationMinutes, PricingSnapshot: pricingSnapshot(entry),
@@ -666,6 +782,14 @@ func (s *BillingStore) prepareStart(q StartSessionRequest) (Session, PC, error) 
 		PaymentStatus: "paid",
 	}
 	return x, pc, nil
+}
+
+func newSessionID() (string, error) {
+	var id [16]byte
+	if _, err := rand.Read(id[:]); err != nil {
+		return "", err
+	}
+	return "S-" + hex.EncodeToString(id[:]), nil
 }
 
 func (s *BillingStore) commitStart(x Session, startedAt time.Time) (Session, error) {
@@ -751,8 +875,19 @@ func startBillingSession(q StartSessionRequest) (Session, error) {
 	if err := timerAction(pc.Address, "play", 0); err != nil {
 		return Session{}, restoreAfterFailure(fmt.Errorf("could not start timer for %s: %w", pc.Name, err), http.StatusBadGateway)
 	}
+	if err := updateBillingSessionLink(pc, x.ID, false); err != nil {
+		cause := fmt.Errorf("could not configure billing synchronization for %s: %w", pc.Name, err)
+		if clearErr := updateBillingSessionLink(pc, x.ID, true); clearErr != nil {
+			cause = fmt.Errorf("%w; clearing a partial timer billing link also failed: %v", cause, clearErr)
+		}
+		return Session{}, restoreAfterFailure(cause, http.StatusBadGateway)
+	}
 	x, err = billingStore.commitStart(x, startedAt)
 	if err != nil {
+		if linkErr := updateBillingSessionLink(pc, x.ID, true); linkErr != nil {
+			logf("billing", "session start failed for pc_id=%s; could not clear timer billing link: %v", pc.ID, linkErr)
+			err = fmt.Errorf("%w; clearing the timer billing link also failed: %v", err, linkErr)
+		}
 		var statusErr *billingHTTPError
 		if errors.As(err, &statusErr) {
 			return Session{}, restoreAfterFailure(statusErr.Err, statusErr.Status)
@@ -793,42 +928,55 @@ func getTimerStatus(address string) (TimerStatus, error) {
 	return status, nil
 }
 
-func timerAction(address, action string, seconds int) error {
+func timerActionWithRemaining(address, action string, seconds int) (int, error) {
 	payload := []byte("{}")
-	if action == "set" {
+	switch action {
+	case "set":
 		payload = fmt.Appendf(nil, `{"seconds":%d}`, seconds)
+	case "tweak":
+		payload = fmt.Appendf(nil, `{"amount":%d}`, seconds)
 	}
 	request, err := http.NewRequest(http.MethodPost, timerEndpoint(address, action), bytes.NewReader(payload))
 	if err != nil {
-		return err
+		return 0, err
 	}
 	request.Header.Set("Content-Type", "application/json")
 	response, err := timerHTTP.Do(request)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer response.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(response.Body, 64<<10))
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return fmt.Errorf("timer endpoint returned HTTP %d: %s", response.StatusCode, strings.TrimSpace(string(body)))
+		return 0, fmt.Errorf("timer endpoint returned HTTP %d: %s", response.StatusCode, strings.TrimSpace(string(body)))
 	}
 	var result struct {
-		Status  string `json:"status"`
-		Message string `json:"message"`
+		Status           string `json:"status"`
+		Message          string `json:"message"`
+		RemainingSeconds *int   `json:"remaining_seconds"`
 	}
 	if err := json.Unmarshal(body, &result); err != nil {
-		return fmt.Errorf("invalid timer response: %w", err)
+		return 0, fmt.Errorf("invalid timer response: %w", err)
 	}
 	if result.Status != "success" {
 		if result.Message == "" {
 			result.Message = "timer command was not accepted"
 		}
-		return errors.New(result.Message)
+		return 0, errors.New(result.Message)
 	}
-	return nil
+	remaining := 0
+	if result.RemainingSeconds != nil {
+		remaining = *result.RemainingSeconds
+	}
+	return remaining, nil
+}
+
+func timerAction(address, action string, seconds int) error {
+	_, err := timerActionWithRemaining(address, action, seconds)
+	return err
 }
 
 func restoreTimerStatus(address string, previous TimerStatus) error {
@@ -923,20 +1071,19 @@ func (s *BillingStore) update(id, action string, minutes, amount int) (Session, 
 			if e != nil {
 				return Session{}, e
 			}
-			x.AdditionalMinutes += minutes
+			x.PurchasedMinutes += minutes
 			x.FinalAmount += entry.Amount
 			x.EstimatedAmount = x.FinalAmount
-			switch {
-			case x.AmountPaid >= x.FinalAmount:
-				x.PaymentStatus = "paid"
-			case x.AmountPaid > 0:
-				x.PaymentStatus = "partial"
-			default:
-				x.PaymentStatus = "unpaid"
-			}
+			x.AmountPaid += entry.Amount
+			x.PaymentStatus = "paid"
+			x.PaymentAt = now
+			x.payments = append(x.payments, paymentRecord{
+				ID:        "P-" + time.Now().UTC().Format("20060102150405.000000000"),
+				Timestamp: now, Amount: entry.Amount, Status: "paid",
+			})
 			start, e := sessionTimestamp(x.StartedAt)
 			if e == nil {
-				x.ExpectedEndAt = start.Add(time.Duration(x.PurchasedMinutes+x.AdditionalMinutes) * time.Minute).Format(time.RFC3339)
+				x.ExpectedEndAt = start.Add(time.Duration(x.PurchasedMinutes+x.AdditionalMinutes) * time.Minute).Format(time.RFC3339Nano)
 			}
 		case "pay":
 			if amount <= 0 {
@@ -978,21 +1125,372 @@ func (s *BillingStore) update(id, action string, minutes, amount int) (Session, 
 	}
 	return Session{}, errors.New("session not found")
 }
-func billingAuthorized(r *http.Request) bool {
-	t := billingStore.token
-	if t == "" {
-		return r.RemoteAddr == "" || strings.HasPrefix(r.RemoteAddr, "127.0.0.1:") || strings.HasPrefix(r.RemoteAddr, "[::1]:")
-	}
-	return subtle.ConstantTimeCompare([]byte(r.Header.Get("X-Billing-Token")), []byte(t)) == 1
+
+func normalizeSessionAddress(address string) string {
+	return strings.TrimRight(strings.ToLower(strings.TrimSpace(address)), "/")
 }
-func billingOnly(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if !billingAuthorized(r) {
-			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "billing authorization required"})
-			return
-		}
-		next(w, r)
+
+func registeredPCByAddress(address string) (PC, bool) {
+	normalized := normalizeSessionAddress(address)
+	if normalized == "" {
+		return PC{}, false
 	}
+	for _, pc := range store.list() {
+		if normalizeSessionAddress(pc.Address) == normalized {
+			return pc, true
+		}
+	}
+	return PC{}, false
+}
+
+func extensionPaymentID(requestID string) string {
+	sum := sha256.Sum256([]byte(requestID))
+	return "E-" + hex.EncodeToString(sum[:])
+}
+
+func (s *BillingStore) extendSessionRecord(id, pcID, pcAddress string, minutes, amount, remaining int, requestID string) (Session, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.require(); err != nil {
+		return Session{}, err
+	}
+	f, err := s.openLocked()
+	if err != nil {
+		return Session{}, err
+	}
+	defer f.Close()
+	rows, err := storedSessionsFromWorkbook(f)
+	if err != nil {
+		return Session{}, err
+	}
+	requestKey := extensionPaymentID(requestID)
+	for _, stored := range rows {
+		x := stored.Session
+		if x.ID != id {
+			continue
+		}
+		if x.PCID != pcID || normalizeSessionAddress(x.PCAddress) != normalizeSessionAddress(pcAddress) {
+			return Session{}, errors.New("session does not belong to the requested system endpoint")
+		}
+		if x.Status != "open" {
+			return Session{}, errors.New("only open sessions can be extended")
+		}
+		for _, payment := range x.payments {
+			if payment.ID != requestKey {
+				continue
+			}
+			if payment.ExtensionMinutes != minutes {
+				return Session{}, errors.New("extension request ID was already used with a different duration")
+			}
+			return x, nil
+		}
+
+		now := time.Now().Format(time.RFC3339Nano)
+		x.PurchasedMinutes += minutes
+		x.FinalAmount += amount
+		x.EstimatedAmount = x.FinalAmount
+		x.AmountPaid += amount
+		if x.AmountPaid >= x.FinalAmount {
+			x.PaymentStatus = "paid"
+		} else {
+			x.PaymentStatus = "partial"
+		}
+		x.PaymentAt = now
+		x.UpdatedAt = now
+		x.payments = append(x.payments, paymentRecord{
+			ID: requestKey, Timestamp: now, Amount: amount, Status: x.PaymentStatus,
+			ExtensionMinutes: minutes, RemainingSeconds: remaining,
+		})
+		started, err := sessionTimestamp(x.StartedAt)
+		if err != nil {
+			return Session{}, fmt.Errorf("session %q has no valid start time: %w", x.ID, err)
+		}
+		x.ExpectedEndAt = started.Add(time.Duration(x.PurchasedMinutes+x.AdditionalMinutes) * time.Minute).Format(time.RFC3339Nano)
+		if err := writeSessionRow(f, "Sessions", stored.Row, x, true); err != nil {
+			return Session{}, err
+		}
+		if err := formatSessionDataRows(f, "Sessions", stored.Row, stored.Row); err != nil {
+			return Session{}, err
+		}
+		if err := s.saveLocked(f); err != nil {
+			return Session{}, err
+		}
+		return x, nil
+	}
+	return Session{}, errors.New("session not found")
+}
+
+func (s *BillingStore) openSessionForSystem(sessionID, pcID, pcAddress string) (Session, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.require(); err != nil {
+		return Session{}, false, err
+	}
+	f, err := s.openLocked()
+	if err != nil {
+		return Session{}, false, err
+	}
+	defer f.Close()
+	stored, err := storedSessionsFromWorkbook(f)
+	if err != nil {
+		return Session{}, false, err
+	}
+	targetAddr := normalizeSessionAddress(pcAddress)
+	if sessionID == "" && pcID == "" && targetAddr == "" {
+		return Session{}, false, errors.New("session ID or system endpoint is required")
+	}
+	var foundSession Session
+	found := false
+	for _, item := range stored {
+		x := item.Session
+		if x.Status != "open" || (sessionID != "" && x.ID != sessionID) {
+			continue
+		}
+		if pcID != "" && x.PCID != pcID {
+			continue
+		}
+		if targetAddr != "" && normalizeSessionAddress(x.PCAddress) != targetAddr {
+			continue
+		}
+		if found {
+			return Session{}, false, errors.New("multiple open sessions match the requested system endpoint")
+		}
+		foundSession, found = x, true
+	}
+	if !found && sessionID != "" {
+		for _, item := range stored {
+			x := item.Session
+			if x.Status == "open" &&
+				(pcID == "" || x.PCID == pcID) &&
+				(targetAddr == "" || normalizeSessionAddress(x.PCAddress) == targetAddr) {
+				return Session{}, false, errors.New("session ID no longer matches the active session for this system")
+			}
+		}
+	}
+	return foundSession, found, nil
+}
+
+type ExtendSessionRequest struct {
+	SessionID  string `json:"session_id,omitempty"`
+	PCID       string `json:"pc_id,omitempty"`
+	PCAddress  string `json:"pc_address,omitempty"`
+	Minutes    int    `json:"minutes,omitempty"`
+	Seconds    int    `json:"seconds,omitempty"`
+	RequestID  string `json:"request_id,omitempty"`
+	TweakTimer *bool  `json:"tweak_timer,omitempty"`
+}
+
+type ExtendSessionResponse struct {
+	SessionFound     bool     `json:"session_found"`
+	Session          *Session `json:"session,omitempty"`
+	RemainingSeconds int      `json:"remaining_seconds,omitempty"`
+	Message          string   `json:"message,omitempty"`
+}
+
+var (
+	extensionMu sync.Mutex
+)
+
+func extendSessionForSystem(req ExtendSessionRequest, tweakRemoteTimer bool) (ExtendSessionResponse, error) {
+	extensionMu.Lock()
+	defer extensionMu.Unlock()
+
+	if req.TweakTimer != nil {
+		tweakRemoteTimer = *req.TweakTimer
+	}
+
+	if strings.TrimSpace(req.RequestID) == "" {
+		return ExtendSessionResponse{}, errors.New("extension request ID is required")
+	}
+	if len(req.RequestID) > 200 {
+		return ExtendSessionResponse{}, errors.New("extension request ID is too long")
+	}
+
+	var targetAddress string
+	var targetPC PC
+	if req.PCID != "" {
+		pc, ok := store.find(req.PCID)
+		if !ok {
+			return ExtendSessionResponse{}, errors.New("gaming system not found")
+		}
+		targetPC = pc
+		targetAddress = pc.Address
+		if req.PCAddress != "" && normalizeSessionAddress(req.PCAddress) != normalizeSessionAddress(pc.Address) {
+			return ExtendSessionResponse{}, errors.New("system ID and endpoint do not match")
+		}
+	} else if req.PCAddress != "" {
+		for _, pc := range store.list() {
+			if normalizeSessionAddress(pc.Address) == normalizeSessionAddress(req.PCAddress) {
+				targetPC = pc
+				targetAddress = pc.Address
+				break
+			}
+		}
+		if targetAddress == "" {
+			return ExtendSessionResponse{}, errors.New("system endpoint is not registered")
+		}
+	}
+
+	activeSession, found, err := billingStore.openSessionForSystem(req.SessionID, targetPC.ID, targetAddress)
+	if err != nil {
+		return ExtendSessionResponse{}, err
+	}
+	if !found {
+		return ExtendSessionResponse{
+			SessionFound: false,
+			Message:      "no open billing session found for this system",
+		}, nil
+	}
+
+	if targetAddress == "" {
+		targetAddress = activeSession.PCAddress
+		targetPC.ID = activeSession.PCID
+	}
+
+	minutes := req.Minutes
+	if req.Seconds != 0 {
+		if minutes != 0 {
+			return ExtendSessionResponse{}, errors.New("specify either minutes or seconds, not both")
+		}
+		if req.Seconds <= 0 || req.Seconds%60 != 0 {
+			return ExtendSessionResponse{}, errors.New("a billed extension must add a whole number of minutes")
+		}
+		minutes = req.Seconds / 60
+	}
+	if minutes <= 0 {
+		return ExtendSessionResponse{}, errors.New("extension duration must be greater than zero")
+	}
+	entry, err := lookupPrice(activeSession.Category, activeSession.Players, minutes)
+	if err != nil {
+		return ExtendSessionResponse{}, fmt.Errorf("pricing rule lookup failed: %w", err)
+	}
+
+	requestKey := extensionPaymentID(req.RequestID)
+	for _, payment := range activeSession.payments {
+		if payment.ID != requestKey {
+			continue
+		}
+		if payment.ExtensionMinutes != minutes {
+			return ExtendSessionResponse{}, errors.New("extension request ID was already used with a different duration")
+		}
+		remaining := payment.RemainingSeconds
+		if tweakRemoteTimer {
+			status, statusErr := getTimerStatus(targetAddress)
+			if statusErr != nil {
+				return ExtendSessionResponse{}, fmt.Errorf("extension was already applied to session %s, but current timer status could not be read: %w", activeSession.ID, statusErr)
+			}
+			remaining = status.RemainingSeconds
+		}
+		return ExtendSessionResponse{SessionFound: true, Session: &activeSession, RemainingSeconds: remaining}, nil
+	}
+
+	remainingSeconds := 0
+	if tweakRemoteTimer && targetAddress != "" {
+		rem, err := timerActionWithRemaining(targetAddress, "tweak", minutes*60)
+		if err != nil {
+			return ExtendSessionResponse{}, fmt.Errorf("could not extend overlay timer on %s: %w", activeSession.PCName, err)
+		}
+		remainingSeconds = rem
+	}
+
+	updated, err := billingStore.extendSessionRecord(activeSession.ID, activeSession.PCID, activeSession.PCAddress, minutes, entry.Amount, remainingSeconds, req.RequestID)
+	if err != nil {
+		if tweakRemoteTimer && targetAddress != "" {
+			if _, rollbackErr := timerActionWithRemaining(targetAddress, "tweak", -minutes*60); rollbackErr != nil {
+				return ExtendSessionResponse{}, apiError(http.StatusInternalServerError, fmt.Errorf("could not update Excel billing record for session %s: %v; timer rollback also failed: %w", activeSession.ID, err, rollbackErr))
+			}
+		}
+		return ExtendSessionResponse{}, apiError(http.StatusInternalServerError, fmt.Errorf("could not update Excel billing record: %w", err))
+	}
+
+	resp := ExtendSessionResponse{
+		SessionFound:     true,
+		Session:          &updated,
+		RemainingSeconds: remainingSeconds,
+	}
+	return resp, nil
+}
+
+func newExtensionRequestID() (string, error) {
+	var id [16]byte
+	if _, err := rand.Read(id[:]); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(id[:]), nil
+}
+
+func extendSessionHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	var req ExtendSessionRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid extension request"})
+		return
+	}
+	resp, err := extendSessionForSystem(req, true)
+	if err != nil {
+		writeBillingError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func internalExtensionHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "POST required"})
+		return
+	}
+	var req ExtendSessionRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid extension request"})
+		return
+	}
+	pc, ok := registeredPCByAddress(req.PCAddress)
+	if !ok || !requestOriginMatchesPC(r.RemoteAddr, pc.Address) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "extension request does not match a registered system endpoint"})
+		return
+	}
+	req.PCID = pc.ID
+	resp, err := extendSessionForSystem(req, true)
+	if err != nil {
+		writeBillingError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func requestOriginMatchesPC(remoteAddr, pcAddress string) bool {
+	remoteHost, _, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		return false
+	}
+	remoteIP := net.ParseIP(remoteHost)
+	if remoteIP == nil {
+		return false
+	}
+	endpoint, err := url.Parse(pcAddress)
+	if err != nil {
+		return false
+	}
+	host := endpoint.Hostname()
+	if host == "" {
+		return false
+	}
+	if endpointIP := net.ParseIP(host); endpointIP != nil {
+		return endpointIP.Equal(remoteIP)
+	}
+	resolved, err := net.LookupIP(host)
+	if err != nil {
+		return false
+	}
+	for _, ip := range resolved {
+		if ip.Equal(remoteIP) {
+			return true
+		}
+	}
+	return false
 }
 func registerBillingHandlers(mux *http.ServeMux) {
 	mux.HandleFunc("/api/pricing", func(w http.ResponseWriter, r *http.Request) {
@@ -1002,15 +1500,17 @@ func registerBillingHandlers(mux *http.ServeMux) {
 		}
 		writeJSON(w, 200, pricingCatalog())
 	})
-	mux.HandleFunc("/api/billing/summary", billingOnly(func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, billingStore.summary()) }))
-	mux.HandleFunc("/api/billing/download", billingOnly(downloadBilling))
-	mux.HandleFunc("/api/sessions", billingOnly(sessionsHandler))
-	mux.HandleFunc("/api/sessions/", billingOnly(sessionActionHandler))
+	mux.HandleFunc("/api/billing/summary", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, billingStore.summary()) })
+	mux.HandleFunc("/api/billing/download", downloadBilling)
+	mux.HandleFunc("/api/sessions/extend", extendSessionHandler)
+	mux.HandleFunc("/internal/api/sessions/extend", internalExtensionHandler)
+	mux.HandleFunc("/api/sessions", sessionsHandler)
+	mux.HandleFunc("/api/sessions/", sessionActionHandler)
 }
 func sessionsHandler(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		x, err := billingStore.sessions(r.URL.Query().Get("search"), r.URL.Query().Get("payment_status"))
+		x, err := billingStore.sessions(r.URL.Query().Get("search"), r.URL.Query().Get("payment_status"), r.URL.Query().Get("status"))
 		if err != nil {
 			writeBillingError(w, err)
 			return
@@ -1034,7 +1534,15 @@ func sessionsHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func sessionActionHandler(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path == "/api/sessions/extend" {
+		extendSessionHandler(w, r)
+		return
+	}
 	parts := strings.Split(strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/sessions/"), "/"), "/")
+	if len(parts) == 1 && parts[0] == "extend" {
+		extendSessionHandler(w, r)
+		return
+	}
 	if len(parts) != 2 || r.Method != http.MethodPost {
 		http.NotFound(w, r)
 		return

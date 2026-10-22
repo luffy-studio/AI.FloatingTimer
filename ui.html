@@ -193,6 +193,10 @@
         font-variant-numeric: tabular-nums;
         margin: 8px 0;
       }
+      .billing-session {
+        color: var(--muted);
+        font-size: 13px;
+      }
       .compact {
         margin-top: 10px;
         padding-top: 10px;
@@ -395,6 +399,7 @@
             "head"
             "time"
             "status"
+            "billing"
             "actions"
             "extend"
             "special"
@@ -437,6 +442,11 @@
           grid-area: status;
           font-size: 12px;
           line-height: 1.1;
+        }
+        .dashboard-card > .billing-session {
+          grid-area: billing;
+          font-size: 11px;
+          line-height: 1.2;
         }
         .dashboard-card > .row {
           grid-area: actions;
@@ -993,6 +1003,7 @@
         $("dashboardGrid").innerHTML = activePCs().length
           ? activePCs().map(cardHTML).join("")
           : '<div class="panel empty">No active systems. Select systems above, add a system, or use Discover.</div>';
+        renderBillingSessions(activeBillingSessions);
         renderBillingForm();
         renderCachedStatuses();
       }
@@ -1045,6 +1056,7 @@
             <button onclick="showDetail(${arg})">Details</button></div>
           <div id="dt-${id}" class="dashboard-time">--:--:--</div>
           <div id="ds-${id}" class="status">Checking...</div>
+          <div id="bill-${id}" class="billing-session" hidden></div>
           <div class="row" style="margin-top:10px">${timerButtons(p.id)}</div>
           ${timerExtensionButtons(p)}
           <div id="special-${id}" class="special-commands" hidden></div>
@@ -1296,7 +1308,37 @@
         pendingExtensions.add(id);
         setExtensionButtons(id, true);
         try {
-          const result = await pcRequest(id, "tweak", {
+          let result;
+          try {
+            result = await request("/api/sessions/extend", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                session_id: activeBillingSessions.find(session =>
+                  session.pc_id === id && session.pc_address === p.address && session.status === "open"
+                )?.id,
+                pc_id: id,
+                pc_address: p.address,
+                seconds,
+                request_id: globalThis.crypto?.randomUUID?.() || `ext-${id}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+              }),
+            });
+          } catch (e) {
+            if (!String(e.message).includes("billing is disabled on this machine")) throw e;
+          }
+          if (result?.session_found) {
+            const current = pcs.find(p => p.id === id);
+            if (isActive(current)) {
+              const address = hostAddress(current);
+              const poller = hostPollers.get(address);
+              cacheTimerRemaining(current, poller, result.remaining_seconds);
+              if (poller) renderHostStatuses(address, poller, true);
+              await pollOne(current);
+            }
+            await loadBilling();
+            return;
+          }
+          const timerResult = await pcRequest(id, "tweak", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ amount: seconds }),
@@ -1305,7 +1347,7 @@
           if (isActive(current)) {
             const address = hostAddress(current);
             const poller = hostPollers.get(address);
-            cacheTimerRemaining(current, poller, result.remaining_seconds);
+            cacheTimerRemaining(current, poller, timerResult.remaining_seconds);
             if (poller) renderHostStatuses(address, poller, true);
             await pollOne(current);
           }
@@ -1417,7 +1459,8 @@
         }
         const amount = Math.round(Number(raw) * Number($("cf-" + id).value));
         if (/^[+-]/.test(raw)) {
-          await command(id, "tweak", { amount });
+          if (amount > 0) await extendTimer(id, amount);
+          else await command(id, "tweak", { amount });
         } else if (await command(id, "set", { seconds: Math.max(0, amount) })) {
           await command(id, "play");
         }
@@ -1441,10 +1484,13 @@
         }
         if (await callSelected("set", { seconds: info.seconds })) await callSelected("play");
       }
-      function detailAdjust() {
-        callSelected("tweak", {
-          amount: Math.round(Number($("detailAdjust").value) * Number($("detailUnit").value)),
-        });
+      async function detailAdjust() {
+        const amount = Math.round(Number($("detailAdjust").value) * Number($("detailUnit").value));
+        if (amount > 0) {
+          await extendTimer(selected, amount);
+          return;
+        }
+        await callSelected("tweak", { amount });
       }
       function openPC(edit = false) {
         const p = edit ? pc() : null;
@@ -1507,30 +1553,29 @@
         }
       }
       let billingCatalog = { currency: "INR", entries: [] };
+      let activeBillingSessions = [];
       let currentBillingSession = null;
-      function billingHeaders() {
-        const token = sessionStorage.getItem("billing-token") || "";
-        return token ? { "X-Billing-Token": token } : {};
-      }
-      async function billingRequest(url, options = {}) {
-        options.headers = { ...billingHeaders(), ...(options.headers || {}) };
-        try { return await request(url, options); }
-        catch (e) {
-          if (String(e.message).includes("authorization")) {
-            const token = prompt("Enter the billing admin token");
-            if (token) { sessionStorage.setItem("billing-token", token); return billingRequest(url, options); }
-          }
-          throw e;
+      function money(value) { return "INR " + Number(value || 0).toLocaleString(); }
+      function renderBillingSessions(sessions) {
+        for (const p of activePCs()) {
+          const element = $("bill-" + p.id);
+          if (!element) continue;
+          const session = sessions.find(x => x.pc_id === p.id && x.pc_address === p.address && x.status === "open");
+          element.hidden = !session;
+          element.textContent = session
+            ? `${session.customer_name} · ${session.category} · ${session.purchased_minutes + session.additional_minutes} min · ${money(session.final_amount)}`
+            : "";
         }
       }
-      function money(value) { return "INR " + Number(value || 0).toLocaleString(); }
       function renderPriceList() {
+        const priceList = $("priceList");
+        if (!priceList) return;
         const groups = new Map();
         for (const entry of billingCatalog.entries) {
           if (!groups.has(entry.category)) groups.set(entry.category, []);
           groups.get(entry.category).push(entry);
         }
-        $("priceList").innerHTML = [...groups].map(([category, entries]) =>
+        priceList.innerHTML = [...groups].map(([category, entries]) =>
           `<div class="price-group"><b>${esc(category)}</b>${entries.map(entry =>
             `<div class="billing-line"><span>${entry.players} player(s) · ${entry.duration_minutes} min</span><b>${money(entry.amount)}</b></div>`
           ).join("")}</div>`
@@ -1597,7 +1642,7 @@
           return;
         }
         try {
-          const sessions = await billingRequest("/api/sessions");
+          const sessions = await request("/api/sessions?status=open");
           if ($("sessionSystem").value !== pcID) return;
           const session = (Array.isArray(sessions) ? sessions : []).find(x => x.pc_id === pcID && x.status === "open");
           renderCurrentBill(session);
@@ -1616,8 +1661,11 @@
       async function loadBilling() {
         try {
           const catalog = await request("/api/pricing"); billingCatalog = Array.isArray(catalog.entries) ? catalog : billingCatalog;
+          const sessions = await request("/api/sessions?status=open");
+          activeBillingSessions = Array.isArray(sessions) ? sessions : [];
+          renderBillingSessions(activeBillingSessions);
           renderPriceList(); renderBillingForm(); await loadHistory();
-          const summary = await billingRequest("/api/billing/summary"); $("metricRevenue").textContent = summary.enabled ? money(summary.today_collected) : "--";
+          const summary = await request("/api/billing/summary"); $("metricRevenue").textContent = summary.enabled ? money(summary.today_collected) : "--";
           $("billingStatus").hidden = !!summary.enabled; $("billingStatus").textContent = summary.configuration_status || "Billing is disabled on this machine.";
           await loadCurrentBill();
         } catch (e) { $("billingStatus").hidden=false; $("billingStatus").textContent="Billing unavailable: "+e.message; }
@@ -1634,7 +1682,8 @@
         button.setAttribute("aria-busy", "true");
         $("sessionMessage").textContent = "Starting the selected system timer...";
         try {
-          const x = await billingRequest("/api/sessions", {
+          const durationMinutes = Number($("sessionDuration").value);
+          const x = await request("/api/sessions", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -1642,11 +1691,41 @@
               category: $("sessionCategory").value,
               customer_name: customer,
               players: Number($("sessionPlayers").value),
-              duration_minutes: Number($("sessionDuration").value),
+              duration_minutes: durationMinutes,
             }),
           });
           $("sessionMessage").textContent = `Session ${x.id} started on ${x.pc_name}.`;
           $("sessionCustomer").value = "";
+          const target = pcs.find(p => p.id === pcID);
+          if (isActive(target)) {
+            const address = hostAddress(target);
+            const poller = hostPollers.get(address);
+            const durationSec = Number(x.purchased_minutes || durationMinutes) * 60;
+            if (poller) {
+              if (poller.promise) poller.controller?.abort();
+              poller.promise = null;
+              if (!timerID(target)) {
+                poller.sample = {
+                  status: {
+                    ...(poller.sample?.status || {}),
+                    remaining_seconds: durationSec,
+                    is_running: true,
+                    timer_status: "running",
+                    time_up_visible: false,
+                  },
+                  receivedAt: performance.now(),
+                };
+              } else {
+                cacheTimerRemaining(target, poller, durationSec);
+                if (poller.sample?.status?.on_behalf_of) {
+                  const ob = poller.sample.status.on_behalf_of.find(a => String(a.id) === timerID(target));
+                  if (ob) { ob.is_running = true; ob.timer_status = "running"; ob.time_up_visible = false; }
+                }
+              }
+              renderHostStatuses(address, poller, true);
+            }
+            await pollOne(target);
+          }
           await Promise.all([loadBilling(), refreshNow()]);
         } catch(e) {
           $("sessionMessage").textContent = e.message;
@@ -1661,7 +1740,7 @@
             search: $("historySearch").value,
             payment_status: $("historyPayment").value,
           });
-          const rows = await billingRequest("/api/sessions?" + query.toString());
+          const rows = await request("/api/sessions?" + query.toString());
           $("historyRows").innerHTML = (Array.isArray(rows) ? rows : []).map(x => {
             const payButton = x.final_amount > x.amount_paid
               ? `<button onclick="sessionAction('${esc(x.id)}','pay')">Paid</button> `
@@ -1672,7 +1751,7 @@
           $("historyRows").innerHTML = `<tr><td colspan='10'>${esc(e.message)}</td></tr>`;
         }
       }
-      async function sessionAction(id, action) { try { await billingRequest("/api/sessions/"+encodeURIComponent(id)+"/"+action,{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"}); await loadBilling(); } catch(e) { alert(e.message); } }
+      async function sessionAction(id, action) { try { await request("/api/sessions/"+encodeURIComponent(id)+"/"+action,{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"}); await loadBilling(); } catch(e) { alert(e.message); } }
       function backupBilling() { window.location.href="/api/billing/download"; }
       restoreSettings();
       refreshSavedList();

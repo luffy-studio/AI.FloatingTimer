@@ -402,6 +402,7 @@ test('pending special commands disable both views and coalesce repeated clicks w
 
 test('timer extension buttons target the selected timer, add exact seconds, and preserve paused state', async () => {
   const h = harness([sample('pc'), agent('pc', '1'), agent('pc', '2')]);
+  h.responses.set('/api/sessions/extend', { session_found: false });
   const agentStatus = (one, two) => ({
     ...status, remaining_seconds: 300, on_behalf_of: [
       { ...status, id: '1', remaining_seconds: one, is_running: false },
@@ -435,6 +436,7 @@ test('timer extension buttons target the selected timer, add exact seconds, and 
 
 test('in-flight timer extension clicks are coalesced and update the cached display immediately', async () => {
   const h = harness([sample('pc'), agent('pc', '1')]);
+  h.responses.set('/api/sessions/extend', { session_found: false });
   h.responses.set('http://pc:18081/status', {
     ...status, on_behalf_of: [
       { ...status, id: '1', remaining_seconds: 60, is_running: false },
@@ -459,6 +461,27 @@ test('in-flight timer extension clicks are coalesced and update the cached displ
   assert.equal(h.node('dt-pc-1').textContent, '00:16:00');
   assert.equal(h.node('ds-pc-1').textContent, 'Paused');
   assert.ok(h.extensions.every(button => button.disabled));
+});
+
+test('a billed dashboard extension uses one session update and refreshes the matching system card', async () => {
+  const h = harness([sample('pc')]);
+  const session = {
+    id: 'S-session-a', pc_id: 'pc', pc_address: 'http://pc:18081', status: 'open',
+    customer_name: 'Alice', category: 'PC Lite', purchased_minutes: 45,
+    additional_minutes: 0, final_amount: 45, amount_paid: 45,
+  };
+  h.responses.set('http://pc:18081/status', { ...status, remaining_seconds: 960 });
+  h.responses.set('/api/sessions/extend', { session_found: true, remaining_seconds: 960, session });
+  h.responses.set('/api/sessions?status=open', [session]);
+  h.start();
+  await h.advance(0);
+
+  await h.run('extendTimer("pc", 900)');
+
+  assert.equal(h.node('dt-pc').textContent, '00:16:00');
+  assert.match(h.node('bill-pc').textContent, /Alice.*45 min.*INR 45/);
+  assert.equal(h.calls.filter(call => call.url === '/api/sessions/extend').length, 1);
+  assert.equal(h.calls.filter(call => call.url === 'http://pc:18081/tweak').length, 0);
 });
 
 test('special commands work for active agents when the host timer is unchecked and reject cross-timer names', async () => {
