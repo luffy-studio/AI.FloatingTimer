@@ -37,6 +37,12 @@ func TestPortReservation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("timer port leaked after failure: %v", err)
 	}
+	for name, listener := range map[string]net.Listener{"timer": a, "management": b} {
+		address, ok := listener.Addr().(*net.TCPAddr)
+		if !ok || !address.IP.IsUnspecified() {
+			t.Errorf("%s listener is not bound to all network interfaces: %v", name, listener.Addr())
+		}
+	}
 	a.Close()
 	b.Close()
 }

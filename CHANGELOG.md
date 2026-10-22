@@ -1,5 +1,12 @@
 x# Changelog
 
+## 2026-10-22 - Removed Billing Authentication and Enabled Network Access
+
+- **Files changed:** `API.md`, `CHANGELOG.md`, `README.md`, `billing.go`, `billing_test.go`, `startup_test.go`, `ui.go`.
+- Removed the optional billing admin-token setting, request header checks, and dashboard token prompt. Billing APIs are available without credentials.
+- Removed source-IP gates from billing-session linking and overlay-extension requests; session routing still requires the exact registered system endpoint and session ID.
+- Both HTTP services already bind to all network interfaces; documented using the host PC's IP and clarified firewall requirements and the risks of public exposure.
+
 ## 2026-10-11 14:46 +05:30
 
 - Added compact +15 min, +30 min, and +1 hr timer extension buttons to each dashboard timer card. Each uses the existing per-system tweak action and preserves the timer's running or paused state.
@@ -28,10 +35,10 @@ x# Changelog
 
 - **Files modified:** `billing.go`, `go.mod`, `go.sum`, `CHANGELOG.md`.
 - **Reason:** Replace the unfinished SQLite billing persistence layer to meet the Excel-only billing storage requirement.
-- **Changes:** Added `github.com/xuri/excelize/v2 v2.11.0`; replaced SQLite-specific persistence with an admin-PC `billing.xlsx` workbook containing `Sessions`, `Payments`, and `Daily Summary` sheets; added workbook validation, in-process write serialization, pre-write backups, temporary save/replacement, session validation, duplicate open-session prevention, searchable session retrieval, protected workbook download, and optional billing bearer-token authorization.
+- **Changes at that time:** Added `github.com/xuri/excelize/v2 v2.11.0`; replaced SQLite-specific persistence with an admin-PC `billing.xlsx` workbook containing `Sessions`, `Payments`, and `Daily Summary` sheets; added workbook validation, in-process write serialization, pre-write backups, temporary save/replacement, session validation, duplicate open-session prevention, searchable session retrieval, and an optional billing bearer-token authorization that was removed on 2026-10-22. Workbook download is now unauthenticated.
 - **Existing functionality preserved:** Timer algorithms, timer endpoints, PC discovery, timeout overlay, existing PC records, ports, and client timer protocol were not changed.
 - **Tests:** `gofmt -w billing.go` completed. `go test -buildvcs=false .` passed (`ok overlay-timer 0.583s`).
-- **Known limitations:** Browser-side billing controls and complete payment, time-extension, close-session, date-filter, and daily-summary mutation flows remain under implementation. The API is unauthenticated, including billing routes; restrict access to trusted networks or use an authenticated HTTPS proxy.
+- **Known limitations at that time:** Browser-side billing controls and complete payment, time-extension, close-session, date-filter, and daily-summary mutation flows remained under implementation. Billing routes were made unauthenticated in that stage; see the 2026-10-22 entry for current access behavior.
 - **Status:** In progress.
 
 ## 2026-10-14 13:18 +05:30 - Unified Excel Billing Dashboard
@@ -41,7 +48,7 @@ x# Changelog
 - **Changes:** Added persisted session extension, payment, and close operations; `Payments` rows; regenerated `Daily Summary` data; protected session-action routes; price loading, billing-session creation, history display/search/payment filter, today-collected header metric, and paid/close history actions in the embedded dashboard.
 - **Existing functionality preserved:** Existing timer controls and their routes, polling behavior, discovery, PC storage, timeout overlay, and network protocol are unchanged. Billing operations use separate Excel-backed endpoints.
 - **Tests:** `gofmt -w billing.go` completed; `go test -buildvcs=false .` passed (`ok overlay-timer 0.616s`); `node --test ui_polling_test.cjs` passed (23 of 23).
-- **Known limitations:** The visible Excel export button cannot attach the bearer-token header when a remote billing token is configured; download therefore works from the admin machine by default. Per-card active customer/bill summaries, date/system filters, and direct Add Time in the active-bill panel remain incomplete.
+- **Known limitations at that time:** The visible Excel export button could not attach the then-configured bearer-token header; token authorization was removed on 2026-10-22. Per-card active customer/bill summaries, date/system filters, and direct Add Time in the active-bill panel remained incomplete.
 - **Status:** In progress.
 
 ## 2026-10-14 13:31 +05:30 - Audit Log Location

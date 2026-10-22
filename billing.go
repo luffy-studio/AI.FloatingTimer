@@ -112,8 +112,8 @@ func setBillingSessionLinkHandler(mux *http.ServeMux, path, pcAddress string) {
 		endpoint, err := url.Parse(link.ManagerEndpoint)
 		if err != nil || (endpoint.Scheme != "http" && endpoint.Scheme != "https") ||
 			endpoint.Host == "" || endpoint.User != nil || endpoint.Path != "/internal/api/sessions/extend" ||
-			endpoint.RawQuery != "" || !requestOriginMatchesPC(r.RemoteAddr, link.ManagerEndpoint) {
-			writeJSON(w, http.StatusForbidden, map[string]string{"error": "billing manager endpoint does not match the request origin"})
+			endpoint.RawQuery != "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid billing manager endpoint"})
 			return
 		}
 		if r.Method == http.MethodPost {
@@ -1448,8 +1448,8 @@ func internalExtensionHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	pc, ok := registeredPCByAddress(req.PCAddress)
-	if !ok || !requestOriginMatchesPC(r.RemoteAddr, pc.Address) {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "extension request does not match a registered system endpoint"})
+	if !ok {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "extension endpoint is not registered"})
 		return
 	}
 	req.PCID = pc.ID
@@ -1461,37 +1461,6 @@ func internalExtensionHandler(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-func requestOriginMatchesPC(remoteAddr, pcAddress string) bool {
-	remoteHost, _, err := net.SplitHostPort(remoteAddr)
-	if err != nil {
-		return false
-	}
-	remoteIP := net.ParseIP(remoteHost)
-	if remoteIP == nil {
-		return false
-	}
-	endpoint, err := url.Parse(pcAddress)
-	if err != nil {
-		return false
-	}
-	host := endpoint.Hostname()
-	if host == "" {
-		return false
-	}
-	if endpointIP := net.ParseIP(host); endpointIP != nil {
-		return endpointIP.Equal(remoteIP)
-	}
-	resolved, err := net.LookupIP(host)
-	if err != nil {
-		return false
-	}
-	for _, ip := range resolved {
-		if ip.Equal(remoteIP) {
-			return true
-		}
-	}
-	return false
-}
 func registerBillingHandlers(mux *http.ServeMux) {
 	mux.HandleFunc("/api/pricing", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {

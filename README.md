@@ -49,7 +49,7 @@ The timer exposes an HTTP API on port `18081` by default (`timer_port` in config
 
 The management UI obtains saved PC addresses from its own backend, then calls each active timer directly from the browser. Timer endpoints allow cross-origin requests with `Access-Control-Allow-Origin: *` and handle OPTIONS preflight requests.
 
-> **Security:** The API, including billing and workbook download endpoints, has no authentication or encryption. No admin token is required or supported. Restrict both ports to trusted networks; anyone who can reach them may control timers and read or change billing data. For remote access, put the timer behind an authenticated HTTPS proxy.
+> **Access:** Both ports listen on all network interfaces, and the API (including billing and workbook download endpoints) has no authentication or encryption. No admin token or login is required. Other devices can connect using this PC's IP address and the configured ports, subject to Windows Firewall and network rules. Anyone who can reach the ports may control timers and read or change billing data; do not expose them directly to the public internet.
 
 ## Common request and response format
 

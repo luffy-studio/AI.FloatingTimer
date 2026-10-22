@@ -61,7 +61,7 @@ func startManagementService(listener net.Listener) {
 		WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second,
 	}
 	startDiscoveryScheduler()
-	log.Printf("Timer Manager: http://localhost:%d", appConfig.UIDiscoveryPort)
+	log.Printf("Timer Manager: http://localhost:%d (listening on all network interfaces)", appConfig.UIDiscoveryPort)
 	if err := server.Serve(listener); err != nil {
 		logf("ui", "management server stopped: %v", err)
 	}

@@ -63,7 +63,7 @@ func TestBillingAPIIsAccessibleWithoutCredentials(t *testing.T) {
 	response := httptest.NewRecorder()
 	mux.ServeHTTP(response, request)
 	if response.Code != http.StatusOK {
-		t.Fatalf("billing summary without a token returned HTTP %d: %s", response.Code, response.Body.String())
+		t.Fatalf("billing summary without credentials returned HTTP %d: %s", response.Code, response.Body.String())
 	}
 }
 
@@ -82,7 +82,7 @@ func TestBillingSessionLinkHandlerScopesLinkToExactTimer(t *testing.T) {
 		t.Fatal(err)
 	}
 	request := httptest.NewRequest(http.MethodPost, "/1/billing-session", strings.NewReader(string(body)))
-	request.RemoteAddr = "192.0.2.20:18082"
+	request.RemoteAddr = "198.51.100.25:18082"
 	response := httptest.NewRecorder()
 	mux.ServeHTTP(response, request)
 	if response.Code != http.StatusOK {
@@ -98,7 +98,7 @@ func TestBillingSessionLinkHandlerScopesLinkToExactTimer(t *testing.T) {
 		t.Fatal(err)
 	}
 	request = httptest.NewRequest(http.MethodDelete, "/1/billing-session", strings.NewReader(string(body)))
-	request.RemoteAddr = "192.0.2.20:18082"
+	request.RemoteAddr = "198.51.100.25:18082"
 	response = httptest.NewRecorder()
 	mux.ServeHTTP(response, request)
 	if response.Code != http.StatusOK {
@@ -842,7 +842,7 @@ func TestSessionExtensionNoActiveSession(t *testing.T) {
 	}
 }
 
-func TestInternalOverlayExtensionRequiresExactRegisteredSource(t *testing.T) {
+func TestInternalOverlayExtensionNeedsNoAuthentication(t *testing.T) {
 	configureBillingTest(t)
 	server, mu, _, state := newBillingTimerServer(t, false)
 	pc := PC{ID: "registered-pc", Name: "Registered PC", Address: server.URL + "/1"}
@@ -875,15 +875,15 @@ func TestInternalOverlayExtensionRequiresExactRegisteredSource(t *testing.T) {
 	mu.Unlock()
 
 	req = httptest.NewRequest(http.MethodPost, "/internal/api/sessions/extend", strings.NewReader(string(body)))
-	req.RemoteAddr = "192.0.2.20:54321"
+	req.RemoteAddr = "198.51.100.25:54321"
 	response = httptest.NewRecorder()
 	mux.ServeHTTP(response, req)
-	if response.Code != http.StatusForbidden {
-		t.Fatalf("unregistered request source was accepted: HTTP %d: %s", response.Code, response.Body.String())
+	if response.Code != http.StatusOK {
+		t.Fatalf("extension without an authentication credential returned HTTP %d: %s", response.Code, response.Body.String())
 	}
 	mu.Lock()
 	if state.RemainingSeconds != 2700 {
-		t.Fatalf("rejected request changed the timer: %+v", state)
+		t.Fatalf("idempotent retry changed timer state: %+v", state)
 	}
 	mu.Unlock()
 }

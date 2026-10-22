@@ -6,7 +6,7 @@ The timer exposes an HTTP API on port `18081` by default (`timer_port` in config
 
 The management UI obtains saved PC addresses from its own backend, then calls each active timer directly from the browser. Timer endpoints allow cross-origin requests with `Access-Control-Allow-Origin: *` and handle OPTIONS preflight requests.
 
-> **Security:** The API currently has no authentication or encryption. Restrict both ports to trusted networks or place the timer behind an authenticated HTTPS proxy.
+> **Access:** Both ports listen on all network interfaces. The API has no authentication or encryption; use this PC's IP address from other devices. Firewall and network rules still apply. Anyone who can reach the ports may control timers and access billing data, so do not expose them directly to the public internet.
 
 ## Common request and response format
 
