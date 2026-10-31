@@ -1,5 +1,23 @@
 # Changelog
 
+## 2026-10-31 - Current bill beside PC timer
+
+- Added a compact `Current Bill: ₹XX` value beside each live PC countdown, sourced from the backend session `final_amount`.
+- Refreshed the displayed bill through the existing billing reload path after extensions, snack charges, payments, and other billing updates without changing timer IDs or controls.
+- Kept the amount visually secondary, aligned on the timer row, and responsive on narrow screens.
+
+## 2026-10-31 - Simple snack quick charges
+
+- Replaced the live product/menu ordering controls with compact `+₹20`, `+₹40`, `+₹60`, `+₹100`, and custom snack-charge actions inside each session card.
+- Added immutable generic snack-charge transactions plus exact transaction corrections/removals that append adjustment history without changing the gaming timer.
+- Kept snack charges in final bills, payment calculations, reports, and Excel ledger exports.
+
+## 2026-10-31 - Apply-based session extensions
+
+- Changed live session extension controls so `+15`, `+30`, `+60`, and custom minutes only select a pending duration and request a backend pricing preview.
+- Added an explicit `Apply Extension` action; only that action commits timer time, billing, and the permanent extension transaction.
+- Preserved pending selections on API failures, cleared them only after successful application, prevented duplicate requests, and updated the cached remaining timer from the atomic backend response.
+
 ## 2026-10-31 - Persistent billing ledger, deferred payments, and snack sales
 
 - Changed session starts and extensions to generate unpaid bills by default; payment is now optional at start, extension, close, and after close.

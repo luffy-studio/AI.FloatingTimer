@@ -617,14 +617,15 @@ different amount or method with the same ID is rejected. The session exposes
 the `Extensions` worksheet. Timer changes and the billing record are committed together;
 timer state is rolled back when the billing write fails.
 
-`GET /api/snacks/menu` lists the centrally managed menu. `POST` and `PUT` create or edit
-items (`name`, `category`, `unit_price`, `available`); `DELETE /api/snacks/menu?id=...`
-removes an item without removing historical orders. `POST /api/sessions/{id}/snacks`
-accepts `item_id`, `quantity`, and `request_id`; unavailable items are rejected and the
-unit price is copied into the immutable order record. `POST /api/sessions/{id}/snacks/adjust`
-accepts `item_id`, `quantity_delta`, and `request_id`, recording an immutable adjustment
-transaction rather than overwriting an earlier order. Snack totals are included in
-`final_amount`, while `gaming_amount` and `snack_amount` remain separate.
+The dashboard uses a deliberately simple quick-charge workflow rather than exposing a
+product catalog or inventory screen. `POST /api/sessions/{id}/snacks/charge` accepts
+`amount` and `request_id`; each successful charge is stored as an immutable
+`Snacks & Beverages` transaction. `POST /api/sessions/{id}/snacks/charge-adjust`
+accepts `order_id`, `amount_delta`, and `request_id` for a correction or removal;
+the adjustment is appended to the ledger and never overwrites the original charge.
+Snack totals are included in `final_amount`, while `gaming_amount` and `snack_amount`
+remain separate. The existing menu/order endpoints remain available only for
+backward-compatible historical records and are not required by the dashboard UI.
 
 ### Local PC ownership and synchronization
 

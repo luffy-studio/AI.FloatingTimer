@@ -88,6 +88,17 @@ type SnackOrderRequest struct {
 	RequestID string `json:"request_id,omitempty"`
 }
 
+type SnackChargeRequest struct {
+	Amount    int    `json:"amount"`
+	RequestID string `json:"request_id,omitempty"`
+}
+
+type SnackChargeAdjustmentRequest struct {
+	OrderID     string `json:"order_id"`
+	AmountDelta int    `json:"amount_delta"`
+	RequestID   string `json:"request_id,omitempty"`
+}
+
 type SnackAdjustmentRequest struct {
 	ItemID        string `json:"item_id"`
 	QuantityDelta int    `json:"quantity_delta"`
@@ -137,7 +148,8 @@ func normalizeSessionLedger(x *Session) {
 			x.GamingAmount = x.FinalAmount - x.SnackAmount
 		}
 	}
-	if x.SnackAmount == 0 {
+	if len(x.SnackOrders) > 0 {
+		x.SnackAmount = 0
 		for _, order := range x.SnackOrders {
 			x.SnackAmount += order.TotalAmount
 		}
@@ -474,6 +486,156 @@ func (s *BillingStore) addSnackOrder(id string, request SnackOrderRequest) (Sess
 		}
 		order := SnackOrder{ID: orderID, RequestID: request.RequestID, SessionID: x.ID, Timestamp: stamp, PCID: x.PCID, PCName: x.PCName, CustomerName: x.CustomerName, ItemID: item.ID, ItemName: item.Name, Category: item.Category, Quantity: request.Quantity, UnitPrice: item.UnitPrice, TotalAmount: item.UnitPrice * request.Quantity, Kind: "sale"}
 		x.SnackOrders = append(x.SnackOrders, order)
+		x.UpdatedAt, x.SyncedUpdatedAt = stamp, ""
+		normalizeSessionLedger(&x)
+		if err := writeSessionRow(f, "Sessions", stored.Row, x, true); err != nil {
+			return Session{}, err
+		}
+		if err := formatSessionDataRows(f, "Sessions", stored.Row, stored.Row); err != nil {
+			return Session{}, err
+		}
+		if err := s.saveLocked(f); err != nil {
+			return Session{}, err
+		}
+		return x, nil
+	}
+	return Session{}, errors.New("session not found")
+}
+
+func (s *BillingStore) addSnackCharge(id string, request SnackChargeRequest) (Session, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.require(); err != nil {
+		return Session{}, err
+	}
+	if request.Amount < 1 || request.Amount > 9999999 {
+		return Session{}, errors.New("snack charge must be between ₹1 and ₹9999999")
+	}
+	if strings.TrimSpace(request.RequestID) == "" || len(request.RequestID) > 200 {
+		return Session{}, errors.New("snack charge request ID is required and must be at most 200 characters")
+	}
+	f, err := s.openLocked()
+	if err != nil {
+		return Session{}, err
+	}
+	defer f.Close()
+	rows, err := storedSessionsFromWorkbook(f)
+	if err != nil {
+		return Session{}, err
+	}
+	for _, stored := range rows {
+		x := stored.Session
+		if x.ID != id {
+			continue
+		}
+		for _, order := range x.SnackOrders {
+			if order.RequestID == request.RequestID {
+				if order.TotalAmount != request.Amount || order.Kind != "charge" {
+					return Session{}, errors.New("snack charge request ID was already used with different billing values")
+				}
+				return x, nil
+			}
+		}
+		if x.Status != "open" {
+			return Session{}, errors.New("snack charges can only be added to an open session")
+		}
+		stamp := ledgerNow()
+		orderID, err := newLedgerID("SNACK-")
+		if err != nil {
+			return Session{}, err
+		}
+		order := SnackOrder{
+			ID: orderID, RequestID: request.RequestID, SessionID: x.ID, Timestamp: stamp,
+			PCID: x.PCID, PCName: x.PCName, CustomerName: x.CustomerName,
+			ItemID: orderID, ItemName: "Snacks & Beverages", Category: "Other", Quantity: 1,
+			UnitPrice: request.Amount, TotalAmount: request.Amount, Kind: "charge",
+		}
+		x.SnackOrders = append(x.SnackOrders, order)
+		x.UpdatedAt, x.SyncedUpdatedAt = stamp, ""
+		normalizeSessionLedger(&x)
+		if err := writeSessionRow(f, "Sessions", stored.Row, x, true); err != nil {
+			return Session{}, err
+		}
+		if err := formatSessionDataRows(f, "Sessions", stored.Row, stored.Row); err != nil {
+			return Session{}, err
+		}
+		if err := s.saveLocked(f); err != nil {
+			return Session{}, err
+		}
+		return x, nil
+	}
+	return Session{}, errors.New("session not found")
+}
+
+func (s *BillingStore) adjustSnackCharge(id string, request SnackChargeAdjustmentRequest) (Session, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.require(); err != nil {
+		return Session{}, err
+	}
+	if strings.TrimSpace(request.OrderID) == "" {
+		return Session{}, errors.New("snack charge transaction ID is required")
+	}
+	if request.AmountDelta == 0 || request.AmountDelta < -9999999 || request.AmountDelta > 9999999 {
+		return Session{}, errors.New("snack charge correction must be between -₹9999999 and ₹9999999")
+	}
+	if strings.TrimSpace(request.RequestID) == "" || len(request.RequestID) > 200 {
+		return Session{}, errors.New("snack charge correction request ID is required and must be at most 200 characters")
+	}
+	f, err := s.openLocked()
+	if err != nil {
+		return Session{}, err
+	}
+	defer f.Close()
+	rows, err := storedSessionsFromWorkbook(f)
+	if err != nil {
+		return Session{}, err
+	}
+	for _, stored := range rows {
+		x := stored.Session
+		if x.ID != id {
+			continue
+		}
+		for _, order := range x.SnackOrders {
+			if order.RequestID == request.RequestID {
+				return x, nil
+			}
+		}
+		if x.Status != "open" {
+			return Session{}, errors.New("snack charges can only be corrected on an open session")
+		}
+		var source *SnackOrder
+		for index := range x.SnackOrders {
+			order := &x.SnackOrders[index]
+			if order.ID == request.OrderID && order.Kind == "charge" {
+				source = order
+				break
+			}
+		}
+		if source == nil {
+			return Session{}, errors.New("snack charge transaction was not found")
+		}
+		currentAmount := 0
+		for _, order := range x.SnackOrders {
+			if order.ID == source.ID || order.ItemID == source.ID {
+				currentAmount += order.TotalAmount
+			}
+		}
+		if currentAmount+request.AmountDelta < 0 {
+			return Session{}, errors.New("snack charge cannot be corrected below zero")
+		}
+		stamp := ledgerNow()
+		adjustmentID, err := newLedgerID("SNACK-")
+		if err != nil {
+			return Session{}, err
+		}
+		adjustment := SnackOrder{
+			ID: adjustmentID, RequestID: request.RequestID, SessionID: x.ID, Timestamp: stamp,
+			PCID: x.PCID, PCName: x.PCName, CustomerName: x.CustomerName,
+			ItemID: source.ID, ItemName: source.ItemName, Category: source.Category,
+			Quantity: 1, UnitPrice: request.AmountDelta, TotalAmount: request.AmountDelta, Kind: "charge_adjustment",
+		}
+		x.SnackOrders = append(x.SnackOrders, adjustment)
 		x.UpdatedAt, x.SyncedUpdatedAt = stamp, ""
 		normalizeSessionLedger(&x)
 		if err := writeSessionRow(f, "Sessions", stored.Row, x, true); err != nil {
@@ -852,6 +1014,62 @@ func addSnackForDashboardContext(ctx context.Context, id string, request SnackOr
 	}
 	if err := billingStore.mergeSyncedSessions(updated.DeviceID, []Session{updated}); err != nil {
 		return Session{}, fmt.Errorf("the owning PC recorded snack order, but this dashboard could not save the synchronized record: %w", err)
+	}
+	return updated, nil
+}
+
+func addSnackChargeForDashboardContext(ctx context.Context, id string, request SnackChargeRequest) (Session, error) {
+	session, err := billingStore.sessionByID(id)
+	if err != nil {
+		return Session{}, err
+	}
+	pc, ok := store.find(session.PCID)
+	if !ok || normalizeSessionAddress(pc.Address) != normalizeSessionAddress(session.PCAddress) {
+		return Session{}, errors.New("the session's exact system endpoint is not registered")
+	}
+	if localBillingPC(pc) {
+		return billingStore.addSnackCharge(id, request)
+	}
+	payload := struct {
+		PCID      string `json:"pc_id"`
+		PCAddress string `json:"pc_address"`
+		DeviceID  string `json:"device_id"`
+		SnackChargeRequest
+	}{session.PCID, session.PCAddress, session.DeviceID, request}
+	var updated Session
+	if err := callBillingPeerContext(ctx, pc, http.MethodPost, "/internal/api/local/sessions/"+url.PathEscape(id)+"/snacks/charge", payload, &updated); err != nil {
+		return Session{}, err
+	}
+	if err := billingStore.mergeSyncedSessions(updated.DeviceID, []Session{updated}); err != nil {
+		return Session{}, fmt.Errorf("the owning PC recorded snack charge, but this dashboard could not save the synchronized record: %w", err)
+	}
+	return updated, nil
+}
+
+func adjustSnackChargeForDashboardContext(ctx context.Context, id string, request SnackChargeAdjustmentRequest) (Session, error) {
+	session, err := billingStore.sessionByID(id)
+	if err != nil {
+		return Session{}, err
+	}
+	pc, ok := store.find(session.PCID)
+	if !ok || normalizeSessionAddress(pc.Address) != normalizeSessionAddress(session.PCAddress) {
+		return Session{}, errors.New("the session's exact system endpoint is not registered")
+	}
+	if localBillingPC(pc) {
+		return billingStore.adjustSnackCharge(id, request)
+	}
+	payload := struct {
+		PCID      string `json:"pc_id"`
+		PCAddress string `json:"pc_address"`
+		DeviceID  string `json:"device_id"`
+		SnackChargeAdjustmentRequest
+	}{session.PCID, session.PCAddress, session.DeviceID, request}
+	var updated Session
+	if err := callBillingPeerContext(ctx, pc, http.MethodPost, "/internal/api/local/sessions/"+url.PathEscape(id)+"/snacks/charge-adjust", payload, &updated); err != nil {
+		return Session{}, err
+	}
+	if err := billingStore.mergeSyncedSessions(updated.DeviceID, []Session{updated}); err != nil {
+		return Session{}, fmt.Errorf("the owning PC corrected snack charge, but this dashboard could not save the synchronized record: %w", err)
 	}
 	return updated, nil
 }

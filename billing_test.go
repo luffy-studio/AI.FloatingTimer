@@ -159,6 +159,55 @@ func TestBillingLedgerPersistsExtensionsSnacksAndDeferredPayments(t *testing.T) 
 	}
 }
 
+func TestQuickSnackChargesAreSeparateCorrectableLedgerTransactions(t *testing.T) {
+	configureBillingTest(t)
+	pc := PC{ID: "pc-quick", Name: "PC 3", Address: "http://127.0.0.1:18081/3"}
+	setBillingTestPCs(pc)
+	session, _, err := billingStore.prepareStart(StartSessionRequest{PCID: pc.ID, Category: "PC Lite", CustomerName: "Quick Charges", Players: 1, DurationMinutes: 30})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err = billingStore.commitStart(session, time.Now().In(billingTimezone))
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := billingStore.addSnackCharge(session.ID, SnackChargeRequest{Amount: 20, RequestID: "quick-20"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := billingStore.addSnackCharge(session.ID, SnackChargeRequest{Amount: 40, RequestID: "quick-40"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.SnackAmount != 20 || second.SnackAmount != 60 || second.FinalAmount != 90 || second.PurchasedMinutes != 30 {
+		t.Fatalf("quick charges changed the wrong totals: first=%+v second=%+v", first, second)
+	}
+	removed, err := billingStore.adjustSnackCharge(session.ID, SnackChargeAdjustmentRequest{OrderID: first.SnackOrders[0].ID, AmountDelta: -20, RequestID: "remove-20"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	corrected, err := billingStore.adjustSnackCharge(session.ID, SnackChargeAdjustmentRequest{OrderID: second.SnackOrders[1].ID, AmountDelta: 20, RequestID: "correct-40"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed.SnackAmount != 40 || corrected.SnackAmount != 60 || corrected.FinalAmount != 90 || len(corrected.SnackOrders) != 4 {
+		t.Fatalf("quick charge correction did not preserve history or totals: %+v", corrected)
+	}
+	if corrected.SnackOrders[0].Kind != "charge" || corrected.SnackOrders[2].Kind != "charge_adjustment" || corrected.SnackOrders[3].Kind != "charge_adjustment" {
+		t.Fatalf("quick charge transaction kinds were not preserved: %+v", corrected.SnackOrders)
+	}
+	if _, err := billingStore.update(session.ID, "close", 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := billingStore.sessionByID(session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.Status != "closed" || reloaded.SnackAmount != 60 || len(reloaded.SnackOrders) != 4 {
+		t.Fatalf("quick charges were not retained after close: %+v", reloaded)
+	}
+}
+
 func TestBillingAPIIsAccessibleWithoutCredentials(t *testing.T) {
 	configureBillingTest(t)
 	mux := http.NewServeMux()

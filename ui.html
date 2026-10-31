@@ -183,6 +183,24 @@
         letter-spacing: -.3px;
         margin: 10px 0 2px;
       }
+      .dashboard-time-row {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 16px;
+        flex-wrap: wrap;
+        min-width: 0;
+        margin: 10px 0 2px;
+      }
+      .dashboard-time-row .dashboard-time { margin: 0; }
+      .dashboard-current-bill {
+        margin-left: auto;
+        color: var(--muted);
+        font-size: 13px;
+        font-weight: 500;
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+      }
       .dashboard-card > .status {
         display: inline-flex;
         align-items: center;
@@ -394,6 +412,8 @@
         .dashboard-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 10px; }
         .dashboard-card { padding: 8px; }
         .dashboard-time { font-size: 21px; margin-top: 7px; }
+        .dashboard-time-row { gap: 6px; margin-top: 7px; }
+        .dashboard-current-bill { font-size: 11px; }
         .dashboard-card > .row { margin-top: 7px; gap: 4px; }
         .card-feature { gap: 6px; margin-top: 8px; padding-top: 8px; }
         .card-customer { gap: 7px; }
@@ -964,7 +984,7 @@
         return `<article class="dashboard-card">
           <div class="dashboard-head"><div><b>${esc(p.name)}</b><div class="hint">${esc(p.address)}</div>${timerID(p) ? '<div class="hint">On-behalf timer ' + esc(timerID(p)) + '</div>' : ''}</div>
             <button onclick="showDetail(${arg})">Details</button></div>
-          <div id="dt-${id}" class="dashboard-time">--:--:--</div>
+          <div class="dashboard-time-row"><div id="dt-${id}" class="dashboard-time">--:--:--</div><div id="current-bill-${id}" class="dashboard-current-bill" hidden aria-live="polite"></div></div>
           <div id="ds-${id}" class="status">Checking...</div>
           <div class="row" style="margin-top:10px">${timerButtons(p.id)}</div>
           <div id="special-${id}" class="special-commands" hidden></div>
@@ -2572,6 +2592,24 @@
         letter-spacing: -.3px;
         margin: 10px 0 2px;
       }
+      .dashboard-time-row {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 16px;
+        flex-wrap: wrap;
+        min-width: 0;
+        margin: 10px 0 2px;
+      }
+      .dashboard-time-row .dashboard-time { margin: 0; }
+      .dashboard-current-bill {
+        margin-left: auto;
+        color: var(--muted);
+        font-size: 13px;
+        font-weight: 500;
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+      }
       .dashboard-card > .status {
         display: inline-flex;
         align-items: center;
@@ -2783,6 +2821,8 @@
         .dashboard-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 10px; }
         .dashboard-card { padding: 8px; }
         .dashboard-time { font-size: 21px; margin-top: 7px; }
+        .dashboard-time-row { gap: 6px; margin-top: 7px; }
+        .dashboard-current-bill { font-size: 11px; }
         .dashboard-card > .row { margin-top: 7px; gap: 4px; }
         .card-feature { gap: 6px; margin-top: 8px; padding-top: 8px; }
         .card-customer { gap: 7px; }
@@ -3353,7 +3393,7 @@
         return `<article class="dashboard-card">
           <div class="dashboard-head"><div><b>${esc(p.name)}</b><div class="hint">${esc(p.address)}</div>${timerID(p) ? '<div class="hint">On-behalf timer ' + esc(timerID(p)) + '</div>' : ''}</div>
             <button onclick="showDetail(${arg})">Details</button></div>
-          <div id="dt-${id}" class="dashboard-time">--:--:--</div>
+          <div class="dashboard-time-row"><div id="dt-${id}" class="dashboard-time">--:--:--</div><div id="current-bill-${id}" class="dashboard-current-bill" hidden aria-live="polite"></div></div>
           <div id="ds-${id}" class="status">Checking...</div>
           <div class="row" style="margin-top:10px">${timerButtons(p.id)}</div>
           <div id="special-${id}" class="special-commands" hidden></div>
@@ -4640,6 +4680,170 @@
           $("liveReportGaming").textContent = money(report.gaming_revenue_collected); $("liveReportSnacks").textContent = money(report.snack_revenue_collected); $("liveReportCash").textContent = money(report.cash_collected); $("liveReportOnline").textContent = money(report.online_collected);
         } catch (_) {}
       };
+      const liveExtensionSelections = new Map();
+      const liveExtensionRequests = new Set();
+      const liveExtensionRenderPattern = /<div class="billing-extension" style="margin-top:10px"><input id="billing-minutes-[\s\S]*?<\/div>(?=<div class="billing-extension" style="margin-top:10px"><input id="live-pay-amount)/;
+      function liveExtensionControls(session, pc) {
+        const state = liveExtensionSelections.get(session.id) || { minutes: 0, amount: 0, loading: false, error: "" };
+        const minutes = Number(state.minutes) || 0;
+        const selected = minutes > 0 ? `${minutes} min` : "None";
+        const charge = state.loading ? "Calculating…" : minutes > 0 && Number(state.amount) > 0 ? money(state.amount) : "—";
+        const disabled = liveExtensionRequests.has(session.id) ? "disabled" : "";
+        return `<div class="billing-extension" style="margin-top:10px"><div class="billing-line"><span>Selected extension</span><b id="live-extension-selected-${esc(session.id)}">${esc(selected)}</b></div><div class="row"><button class="billing-action" ${disabled} onclick="liveSelectExtension(${argument(session.id)},15)">+15</button><button class="billing-action" ${disabled} onclick="liveSelectExtension(${argument(session.id)},30)">+30</button><button class="billing-action" ${disabled} onclick="liveSelectExtension(${argument(session.id)},60)">+60</button><input id="live-extension-minutes-${esc(session.id)}" type="number" min="1" max="1440" step="1" placeholder="Custom minutes" value="${minutes || ""}" ${disabled} oninput="liveCustomExtensionInput(${argument(session.id)},this.value)"><button class="billing-action" ${disabled} onclick="livePreviewExtension(${argument(session.id)})">Preview</button></div><div class="billing-line"><span>Additional charge preview</span><b id="live-extension-charge-${esc(session.id)}">${esc(charge)}</b></div><div class="hint">Timer and billing change only after Apply Extension.</div>${state.error ? `<div class="error">${esc(state.error)}</div>` : ""}<button class="primary billing-action" ${disabled || !minutes || state.loading || !state.amount ? "disabled" : ""} onclick="liveApplyExtension(${argument(session.id)},${argument(pc.id)})">Apply Extension</button></div>`;
+      }
+      function liveSetExtensionSelection(id, minutes) {
+        const current = liveExtensionSelections.get(id) || {};
+        liveExtensionSelections.set(id, { ...current, minutes: Math.floor(Number(minutes) || 0), amount: 0, loading: false, error: "" });
+      }
+      async function livePreviewExtension(id) {
+        const session = activeBillingSessions.find(item => item.id === id && item.status === "open");
+        const state = liveExtensionSelections.get(id) || {};
+        const minutes = Math.floor(Number(state.minutes) || 0);
+        if (!session || minutes < 1 || minutes > 1440) {
+          liveExtensionSelections.set(id, { ...state, minutes, amount: 0, loading: false, error: "Enter extension minutes from 1 to 1440." });
+          liveRenderBillingSessions(activeBillingSessions); return;
+        }
+        const version = (state.version || 0) + 1;
+        liveExtensionSelections.set(id, { ...state, minutes, amount: 0, loading: true, error: "", version });
+        liveRenderBillingSessions(activeBillingSessions);
+        try {
+          const quote = await request(`/api/pricing/quote?category=${encodeURIComponent(session.category)}&players=${encodeURIComponent(session.players)}&duration_minutes=${minutes}`, {}, { feature: "session-extension-preview" });
+          const latest = liveExtensionSelections.get(id);
+          if (!latest || latest.version !== version) return;
+          liveExtensionSelections.set(id, { ...latest, amount: Number(quote.amount) || 0, loading: false, error: "" });
+        } catch (error) {
+          const latest = liveExtensionSelections.get(id);
+          if (latest && latest.version === version) liveExtensionSelections.set(id, { ...latest, amount: 0, loading: false, error: error.message });
+        }
+        liveRenderBillingSessions(activeBillingSessions);
+      }
+      function liveSelectExtension(id, minutes) { liveSetExtensionSelection(id, minutes); livePreviewExtension(id); }
+      function liveCustomExtensionInput(id, value) { liveSetExtensionSelection(id, value); if (Number(value) > 0) livePreviewExtension(id); else liveRenderBillingSessions(activeBillingSessions); }
+      async function liveApplyExtension(id, pcID) {
+        if (liveExtensionRequests.has(id)) return;
+        const session = activeBillingSessions.find(item => item.id === id && item.status === "open");
+        const state = liveExtensionSelections.get(id);
+        const minutes = Math.floor(Number(state?.minutes) || 0);
+        if (!session || !state || state.loading || minutes < 1 || !state.amount) return;
+        const pc = pcs.find(item => item.id === pcID && item.address === session.pc_address);
+        if (!pc) return;
+        liveExtensionRequests.add(id);
+        liveExtensionSelections.set(id, { ...state, error: "", loading: true });
+        liveRenderBillingSessions(activeBillingSessions);
+        try {
+          const result = await request("/api/sessions/extend", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session_id: id, pc_id: pc.id, pc_address: pc.address, minutes, request_id: requestID() }) }, { deviceId: pc.id, feature: "session-extension" });
+          if (!result?.session_found || !result.session) throw new Error(result?.message || "The session extension was not applied.");
+          const poller = hostPollers.get(hostAddress(pc));
+          if (Number.isSafeInteger(Number(result.remaining_seconds)) && Number(result.remaining_seconds) >= 0) cacheTimerRemaining(pc, poller, Number(result.remaining_seconds));
+          if (poller) renderHostStatuses(hostAddress(pc), poller, true);
+          liveExtensionSelections.delete(id);
+          await pollOne(pc);
+          await loadBilling();
+        } catch (error) {
+          const current = liveExtensionSelections.get(id) || state;
+          liveExtensionSelections.set(id, { ...current, loading: false, error: error.message });
+          liveRenderBillingSessions(activeBillingSessions);
+        } finally { liveExtensionRequests.delete(id); }
+      }
+      const liveBillingRendererBeforeApply = liveRenderBillingSessions;
+      liveRenderBillingSessions = function (sessions) {
+        liveBillingRendererBeforeApply(sessions);
+        for (const p of activePCs()) {
+          const session = sessions.find(item => item.pc_id === p.id && item.pc_address === p.address && item.status === "open");
+          const details = $("session-details-" + p.id);
+          if (!session || !details) continue;
+          details.innerHTML = details.innerHTML.replace(liveExtensionRenderPattern, liveExtensionControls(session, p));
+        }
+      };
+      renderBillingSessions = liveRenderBillingSessions;
+      const liveBaseQuickFill = quickFill;
+      quickFill = function (button, id, value, unit) {
+        const pc = pcs.find(item => item.id === id);
+        const session = pc && activeBillingSessions.find(item => item.pc_id === id && item.pc_address === pc.address && item.status === "open");
+        if (session) {
+          const minutes = Math.abs(Number(value) || 0) * (String(unit) === "3600" ? 60 : 1);
+          if (minutes > 0) liveSelectExtension(session.id, minutes);
+          return;
+        }
+        liveBaseQuickFill(button, id, value, unit);
+      };
+      const liveSnackChargeRequests = new Set();
+      function liveSnackChargeBalance(session, orderID) {
+        return (session.snack_orders || []).filter(item => item.id === orderID || item.item_id === orderID).reduce((sum, item) => sum + (Number(item.total_amount) || 0), 0);
+      }
+      function liveSnackChargeHistory(session) {
+        const orders = Array.isArray(session.snack_orders) ? session.snack_orders : [];
+        const rows = orders.map(order => {
+          const amount = Number(order.total_amount) || 0;
+          const isQuickCharge = order.kind === "charge";
+          const controls = isQuickCharge && session.status === "open" ? `<button onclick="liveRemoveSnackCharge(${argument(session.id)},${argument(order.id)})">Remove</button> <button onclick="liveCorrectSnackCharge(${argument(session.id)},${argument(order.id)})">Correct</button>` : "";
+          return `<tr><td>${esc(order.timestamp)}</td><td>${esc(order.item_name || "Snacks & Beverages")}</td><td>${money(amount)}</td><td>${esc(order.kind || "sale")}</td><td>${controls}</td></tr>`;
+        }).join("") || `<tr><td colspan="5" class="hint">No snack charges recorded.</td></tr>`;
+        return `<h3 style="margin-top:10px">Snacks &amp; Beverages History</h3><table><thead><tr><th>Timestamp</th><th>Charge</th><th>Amount</th><th>Type</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
+      }
+      liveBillingHistory = function (session) {
+        const extensions = Array.isArray(session.extensions) ? session.extensions : [];
+        const payments = Array.isArray(session.payment_history) ? session.payment_history : [];
+        const extensionRows = extensions.map(item => `<tr><td>${esc(item.timestamp)}</td><td>${Number(item.added_minutes) || 0} min</td><td>${money(item.amount)}</td></tr>`).join("") || `<tr><td colspan="3" class="hint">No extensions recorded.</td></tr>`;
+        const paymentRows = payments.map(item => `<tr><td>${esc(item.timestamp)}</td><td>${money(item.amount)}</td><td>${esc(item.method || "cash")}</td></tr>`).join("") || `<tr><td colspan="3" class="hint">No payments recorded.</td></tr>`;
+        return `<div class="table-wrap"><h3>Extension History</h3><table><thead><tr><th>Timestamp</th><th>Minutes</th><th>Amount</th></tr></thead><tbody>${extensionRows}</tbody></table><h3 style="margin-top:10px">Payment History</h3><table><thead><tr><th>Timestamp</th><th>Amount</th><th>Method</th></tr></thead><tbody>${paymentRows}</tbody></table>${liveSnackChargeHistory(session)}</div>`;
+      };
+      function liveSnackQuickControls(session) {
+        const disabled = liveSnackChargeRequests.has(session.id) ? "disabled" : "";
+        return `<div class="billing-extension" style="margin-top:10px"><div class="billing-line"><span>Snacks &amp; Beverages</span><b>${money(session.snack_amount)}</b></div><div class="row"><button class="billing-action" ${disabled} onclick="liveAddSnackCharge(${argument(session.id)},20)">+₹20</button><button class="billing-action" ${disabled} onclick="liveAddSnackCharge(${argument(session.id)},40)">+₹40</button><button class="billing-action" ${disabled} onclick="liveAddSnackCharge(${argument(session.id)},60)">+₹60</button><button class="billing-action" ${disabled} onclick="liveAddSnackCharge(${argument(session.id)},100)">+₹100</button><input id="live-snack-custom-${esc(session.id)}" type="number" min="1" max="9999999" step="1" placeholder="Custom Amount" ${disabled}><button class="billing-action" ${disabled} onclick="liveAddCustomSnackCharge(${argument(session.id)})">Add</button></div><div class="hint">Snack charges do not change the gaming timer.</div></div>`;
+      }
+      async function liveAddSnackCharge(id, amount) {
+        if (liveSnackChargeRequests.has(id)) return;
+        amount = Math.floor(Number(amount) || 0);
+        if (amount < 1 || amount > 9999999) { alert("Enter a snack charge between ₹1 and ₹9999999."); return; }
+        liveSnackChargeRequests.add(id);
+        try { await request("/api/sessions/" + encodeURIComponent(id) + "/snacks/charge", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ amount, request_id: requestID() }) }, { feature: "snack-charge" }); await loadBilling(); }
+        catch (error) { alert(error.message); }
+        finally { liveSnackChargeRequests.delete(id); }
+      }
+      function liveAddCustomSnackCharge(id) { const input = $("live-snack-custom-" + id); liveAddSnackCharge(id, input?.value); }
+      async function liveAdjustSnackCharge(id, orderID, amountDelta) {
+        if (liveSnackChargeRequests.has(id)) return;
+        liveSnackChargeRequests.add(id);
+        try { await request("/api/sessions/" + encodeURIComponent(id) + "/snacks/charge-adjust", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ order_id: orderID, amount_delta: amountDelta, request_id: requestID() }) }, { feature: "snack-charge" }); await loadBilling(); }
+        catch (error) { alert(error.message); }
+        finally { liveSnackChargeRequests.delete(id); }
+      }
+      function liveRemoveSnackCharge(id, orderID) {
+        const session = activeBillingSessions.find(item => item.id === id);
+        const balance = session ? liveSnackChargeBalance(session, orderID) : 0;
+        if (balance > 0) liveAdjustSnackCharge(id, orderID, -balance);
+      }
+      function liveCorrectSnackCharge(id, orderID) {
+        const session = activeBillingSessions.find(item => item.id === id);
+        const current = session ? liveSnackChargeBalance(session, orderID) : 0;
+        const next = Number(prompt("Corrected snack amount in ₹", String(current)));
+        if (!Number.isSafeInteger(next) || next < 0 || next > 9999999 || next === current) return;
+        liveAdjustSnackCharge(id, orderID, next - current);
+      }
+      function liveUpdateCurrentBills(sessions) {
+        for (const p of activePCs()) {
+          const bill = $("current-bill-" + p.id);
+          if (!bill) continue;
+          const session = sessions.find(item => item.pc_id === p.id && item.pc_address === p.address && item.status === "open");
+          bill.hidden = !session;
+          bill.textContent = session ? `Current Bill: ${money(session.final_amount)}` : "";
+        }
+      }
+      const liveBaseRenderWithMenu = liveRenderBillingSessions;
+      liveRenderBillingSessions = function (sessions) {
+        liveBaseRenderWithMenu(sessions);
+        for (const p of activePCs()) {
+          const session = sessions.find(item => item.pc_id === p.id && item.pc_address === p.address && item.status === "open");
+          const details = $("session-details-" + p.id);
+          if (!session || !details) continue;
+          details.innerHTML = details.innerHTML.replace(/<div class="billing-extension" style="margin-top:10px"><select id="live-snack-item-[\s\S]*?<\/div>(?=<div class="table-wrap"><h3>Extension History)/, liveSnackQuickControls(session));
+          details.innerHTML = details.innerHTML.replace(">Final bill</span>", ">Total Session Bill</span>");
+        }
+        liveUpdateCurrentBills(sessions);
+      };
+      liveLoadSnackMenu = async function () { liveSnackMenu = []; liveRenderBillingSessions(activeBillingSessions); };
+      renderBillingSessions = liveRenderBillingSessions;
       const liveBaseLoadBilling = loadBilling;
       loadBilling = async function () { await liveBaseLoadBilling(); await liveLoadSnackMenu(); liveRenderBillingSessions(activeBillingSessions); };
       loadBilling();

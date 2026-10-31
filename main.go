@@ -1040,10 +1040,8 @@ func displayTimeUp(forced bool) {
 	})
 }
 
-// hideTimeUp dismisses the full-screen alert. Called both from the UI
-// "Minimize" button and automatically from every action that changes timer
-// state (add time, pause, play, reset) — per the requirement that any of
-// those should pull the alert out of the way on their own.
+// hideTimeUp dismisses the full-screen alert when an action changes timer
+// state or the window is closed.
 func hideTimeUp() {
 	logf("hideTimeUp", "begin, waiting for lock")
 	state.Lock()
@@ -1069,8 +1067,7 @@ func hideTimeUp() {
 
 // buildTimeUpWindow creates (but does not show) the full-screen "TIME UP"
 // alert. It's a normal Fyne window, not the chrome-stripped overlay — when
-// SetFullScreen(true) is applied Windows removes the titlebar anyway, so the
-// in-UI Minimize button is what makes it dismissible.
+// SetFullScreen(true) is applied Windows removes the titlebar.
 func buildTimeUpWindow(myApp fyne.App) fyne.Window {
 	logf("buildTimeUpWindow", "begin")
 	w := myApp.NewWindow(TimeUpTitle)
@@ -1082,16 +1079,7 @@ func buildTimeUpWindow(myApp fyne.App) fyne.Window {
 	label.TextStyle = fyne.TextStyle{Bold: true}
 	label.Alignment = fyne.TextAlignCenter
 
-	minimizeBtn := widget.NewButton("Minimize", func() {
-		logf("timeUpWindow", "Minimize button clicked, begin")
-		hideTimeUp()
-		logf("timeUpWindow", "Minimize button - hideTimeUp returned")
-	})
-
-	// Keep both controls in one centered layout. The previous Border layout
-	// split them between independently sized regions and could be initialized
-	// incorrectly when the hidden window entered fullscreen for the first time.
-	alert := container.NewVBox(label, container.NewCenter(minimizeBtn))
+	alert := container.NewVBox(label)
 	w.SetContent(container.NewMax(bg, container.NewCenter(alert)))
 	w.SetCloseIntercept(func() {
 		logf("timeUpWindow", "close intercepted (Alt+F4/X), begin")

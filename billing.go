@@ -2311,6 +2311,8 @@ func localSessionHandler(w http.ResponseWriter, r *http.Request) {
 		ItemID        string `json:"item_id"`
 		Quantity      int    `json:"quantity"`
 		QuantityDelta int    `json:"quantity_delta"`
+		OrderID       string `json:"order_id"`
+		AmountDelta   int    `json:"amount_delta"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid session update"})
@@ -2345,6 +2347,18 @@ func localSessionHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		session, err = billingStore.adjustSnackOrder(parts[0], SnackAdjustmentRequest{ItemID: body.ItemID, QuantityDelta: body.QuantityDelta, RequestID: body.RequestID})
+	} else if parts[1] == "snacks" && len(parts) == 3 && parts[2] == "charge" {
+		if body.RequestID == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "request_id is required"})
+			return
+		}
+		session, err = billingStore.addSnackCharge(parts[0], SnackChargeRequest{Amount: body.Amount, RequestID: body.RequestID})
+	} else if parts[1] == "snacks" && len(parts) == 3 && parts[2] == "charge-adjust" {
+		if body.RequestID == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "request_id is required"})
+			return
+		}
+		session, err = billingStore.adjustSnackCharge(parts[0], SnackChargeAdjustmentRequest{OrderID: body.OrderID, AmountDelta: body.AmountDelta, RequestID: body.RequestID})
 	} else if parts[1] == "close" {
 		pc, ok := store.find(current.PCID)
 		if !ok || normalizeSessionAddress(pc.Address) != normalizeSessionAddress(current.PCAddress) {
@@ -2512,6 +2526,8 @@ func sessionActionHandler(w http.ResponseWriter, r *http.Request) {
 		ItemID        string `json:"item_id"`
 		Quantity      int    `json:"quantity"`
 		QuantityDelta int    `json:"quantity_delta"`
+		OrderID       string `json:"order_id"`
+		AmountDelta   int    `json:"amount_delta"`
 	}
 	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body) != nil {
 		writeJSON(w, 400, map[string]string{"error": "invalid session update"})
@@ -2522,6 +2538,10 @@ func sessionActionHandler(w http.ResponseWriter, r *http.Request) {
 	action := parts[1]
 	if len(parts) == 3 && parts[1] == "snacks" && parts[2] == "adjust" {
 		action = "snacks/adjust"
+	} else if len(parts) == 3 && parts[1] == "snacks" && parts[2] == "charge" {
+		action = "snacks/charge"
+	} else if len(parts) == 3 && parts[1] == "snacks" && parts[2] == "charge-adjust" {
+		action = "snacks/charge-adjust"
 	} else if len(parts) != 2 {
 		http.NotFound(w, r)
 		return
@@ -2544,6 +2564,18 @@ func sessionActionHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		x, err = adjustSnackForDashboardContext(r.Context(), parts[0], SnackAdjustmentRequest{ItemID: body.ItemID, QuantityDelta: body.QuantityDelta, RequestID: body.RequestID})
+	case "snacks/charge":
+		if body.RequestID == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "request_id is required"})
+			return
+		}
+		x, err = addSnackChargeForDashboardContext(r.Context(), parts[0], SnackChargeRequest{Amount: body.Amount, RequestID: body.RequestID})
+	case "snacks/charge-adjust":
+		if body.RequestID == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "request_id is required"})
+			return
+		}
+		x, err = adjustSnackChargeForDashboardContext(r.Context(), parts[0], SnackChargeAdjustmentRequest{OrderID: body.OrderID, AmountDelta: body.AmountDelta, RequestID: body.RequestID})
 	default:
 		x, err = updateSessionForDashboardContext(r.Context(), parts[0], action, body.Minutes, body.Amount)
 	}
