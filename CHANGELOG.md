@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-31 - Responsive dashboard refinement
+
+- Tightened the dashboard grid with adaptive card widths, compact gaps, and top-aligned cards so desktop and tablet layouts use available width without stretching short cards.
+- Preserved the existing 2-column mobile layout where it fits, with a single-column fallback on very narrow screens and smaller card metadata/billing typography.
+- Kept timer, current-bill, status, extension, sync, session, and billing controls unchanged while reducing unnecessary card spacing.
+
 ## 2026-10-31 - Current bill beside PC timer
 
 - Added a compact `Current Bill: ₹XX` value beside each live PC countdown, sourced from the backend session `final_amount`.
