@@ -391,12 +391,19 @@
         .wrap { padding: 10px; }
         .layout, .detail-grid { grid-template-columns: 1fr; }
         .time { font-size: 38px; }
-        .dashboard-grid { grid-template-columns: minmax(0, 1fr); gap: 10px; }
-        .dashboard-card { padding: 12px; }
-        .dashboard-time { font-size: 26px; }
+        .dashboard-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 10px; }
+        .dashboard-card { padding: 8px; }
+        .dashboard-time { font-size: 21px; margin-top: 7px; }
+        .dashboard-card > .row { margin-top: 7px; gap: 4px; }
+        .card-feature { gap: 6px; margin-top: 8px; padding-top: 8px; }
+        .card-customer { gap: 7px; }
+        .pc-session-details { padding: 7px 8px; }
+        .billing-line { gap: 5px; font-size: 11.5px; }
+        .quick-add { gap: 4px; }
+        .quick-add button { padding: 3px 6px; font-size: 10.5px; }
         .desktop-timer-buttons { display: none; }
-        .mobile-timer-buttons { display: inline-flex; gap: 6px; width: 100%; }
-        .mobile-timer-buttons button { flex: 1 1 0; min-height: 34px; font-size: 12.5px; }
+        .mobile-timer-buttons { display: inline-flex; gap: 4px; width: 100%; }
+        .mobile-timer-buttons button { flex: 1 1 0; min-height: 32px; padding: 4px; font-size: 11.5px; }
         .mobile-timer-buttons .mobile-toggle { flex: 2 1 0; }
         .special-full-name { display: none; }
         .special-short-name { display: inline; }
@@ -407,6 +414,9 @@
         .dashboard-filters input, .dashboard-filters select { flex: 1 1 100%; min-width: 0; }
         .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
         th, td { padding: 7px 8px; }
+      }
+      @media (max-width: 359px) {
+        .dashboard-grid { grid-template-columns: minmax(0, 1fr); }
       }
     
     </style>
@@ -2467,12 +2477,19 @@
         .wrap { padding: 10px; }
         .layout, .detail-grid { grid-template-columns: 1fr; }
         .time { font-size: 38px; }
-        .dashboard-grid { grid-template-columns: minmax(0, 1fr); gap: 10px; }
-        .dashboard-card { padding: 12px; }
-        .dashboard-time { font-size: 26px; }
+        .dashboard-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 10px; }
+        .dashboard-card { padding: 8px; }
+        .dashboard-time { font-size: 21px; margin-top: 7px; }
+        .dashboard-card > .row { margin-top: 7px; gap: 4px; }
+        .card-feature { gap: 6px; margin-top: 8px; padding-top: 8px; }
+        .card-customer { gap: 7px; }
+        .pc-session-details { padding: 7px 8px; }
+        .billing-line { gap: 5px; font-size: 11.5px; }
+        .quick-add { gap: 4px; }
+        .quick-add button { padding: 3px 6px; font-size: 10.5px; }
         .desktop-timer-buttons { display: none; }
-        .mobile-timer-buttons { display: inline-flex; gap: 6px; width: 100%; }
-        .mobile-timer-buttons button { flex: 1 1 0; min-height: 34px; font-size: 12.5px; }
+        .mobile-timer-buttons { display: inline-flex; gap: 4px; width: 100%; }
+        .mobile-timer-buttons button { flex: 1 1 0; min-height: 32px; padding: 4px; font-size: 11.5px; }
         .mobile-timer-buttons .mobile-toggle { flex: 2 1 0; }
         .special-full-name { display: none; }
         .special-short-name { display: inline; }
@@ -2483,6 +2500,9 @@
         .dashboard-filters input, .dashboard-filters select { flex: 1 1 100%; min-width: 0; }
         .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
         th, td { padding: 7px 8px; }
+      }
+      @media (max-width: 359px) {
+        .dashboard-grid { grid-template-columns: minmax(0, 1fr); }
       }
     
     </style>
