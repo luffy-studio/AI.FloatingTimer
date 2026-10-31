@@ -573,6 +573,16 @@ system's registered address, reads its existing timer status, sets the purchased
 duration, and starts that timer before persisting the session. Numeric path suffixes
 such as `/1` are preserved, so a virtual timer is not confused with its host.
 
+For the fixed Paradise Gaming assignments, the server derives the category from the
+existing registered PC name: PC 1 and PC 2 are `PC Pro`, PC 3 and PC 4 are `PC Lite`,
+and PS5 is `PS5`. A supplied mismatching category is rejected; the dashboard does not
+allow a category override. `GET /api/pricing/quote` is the authoritative bidirectional
+quote endpoint and accepts either `duration_minutes` or `amount`. Exact 15/30/60-minute
+packages retain their listed prices. Other durations use the least-cost combination of
+those packages plus a rounded remainder at the 15-minute package rate, with a ₹15
+minimum charge. Manual amounts return the longest duration that does not exceed the
+entered amount.
+
 The server rejects duplicate open sessions and reports timer errors instead of
 recording a failed start as successful. If the timer command or workbook write fails
 after the timer has been changed, the server attempts to restore the timer's prior
@@ -581,13 +591,40 @@ reported explicitly.
 
 Each device's `billing.xlsx` workbook has a `Sessions` worksheet with the visible
 columns `Date`, `Time`, `Customer`, `System`, `Players`, `Start Time`,
-`Purchased Minutes`, and `Amount Paid`. Date/time cells use Excel date/time values
-with `DD-MM-YYYY` and `HH:MM:SS` display formats. New sessions record the rate-card
-price as `Amount Paid` at start, per the operator's configured billing workflow.
+`Purchased Minutes`, `Amount Paid`, `Additional Minutes`, `Purchased Amount`,
+`Additional Amount`, `Total Amount`, `Cash Received`, `Online Received`, `Amount Due`,
+`Payment Status`, `End Time`, and `Session ID`. Date/time cells use Excel date/time values
+with `DD-MM-YYYY` and `HH:MM:SS` display formats. New sessions record `Amount Paid` as
+zero at start; the initial bill is unpaid until an operator records one or more payments.
 Session identifiers and fields needed by the API are stored in row comments rather
 than extra worksheet columns. The reporting hub stores idempotent copies imported
 from registered PCs. Existing session and payment data is migrated after a workbook
-backup; payment history is retained in the associated session metadata.
+backup; payment history is retained in the associated session metadata. Complete
+transaction ledgers are also exported to the `Extensions`, `Payments`, `Snacks`, and
+`Menu` worksheets.
+
+### Deferred payment, extensions, and snacks
+
+`POST /api/sessions/{id}/pay` records a payment without requiring the session to be open.
+The request is `{ "amount": 100, "method": "cash|online", "request_id": "unique-id" }`.
+An amount of zero settles the current balance. Reusing a request ID is idempotent; a
+different amount or method with the same ID is rejected. The session exposes
+`final_amount`, `amount_paid`, `amount_due`, `cash_paid`, `online_paid`,
+`payment_status`, and `payment_history`.
+
+`POST /api/sessions/extend` accepts custom `minutes` or a custom `amount` and a unique
+`request_id`. Every successful extension adds one immutable record to `extensions` and
+the `Extensions` worksheet. Timer changes and the billing record are committed together;
+timer state is rolled back when the billing write fails.
+
+`GET /api/snacks/menu` lists the centrally managed menu. `POST` and `PUT` create or edit
+items (`name`, `category`, `unit_price`, `available`); `DELETE /api/snacks/menu?id=...`
+removes an item without removing historical orders. `POST /api/sessions/{id}/snacks`
+accepts `item_id`, `quantity`, and `request_id`; unavailable items are rejected and the
+unit price is copied into the immutable order record. `POST /api/sessions/{id}/snacks/adjust`
+accepts `item_id`, `quantity_delta`, and `request_id`, recording an immutable adjustment
+transaction rather than overwriting an earlier order. Snack totals are included in
+`final_amount`, while `gaming_amount` and `snack_amount` remain separate.
 
 ### Local PC ownership and synchronization
 
@@ -619,8 +656,13 @@ non-empty customer names after trimming surrounding whitespace and comparing
 case-insensitively; it is not the session count. `billed_amount` sums each
 session's `final_amount`; `collected_amount` and the backwards-compatible
 `revenue` field sum recorded `amount_paid`; `outstanding` sums
-`max(final_amount - amount_paid, 0)`. PC totals expose the same billed,
-collected, and outstanding distinctions. Repeated synchronization upserts the
+`max(final_amount - amount_paid, 0)`. The report also exposes cash/online
+collections, gaming-versus-snack collected revenue, snack sales, and
+unpaid/partially-paid/paid session counts. For combined bills, collected gaming
+revenue is allocated first and any remaining collected amount is allocated to
+snacks; the immutable payment transactions remain separate. PC totals expose the
+same billed, collected, gaming, snack, cash, online, and outstanding distinctions.
+Repeated synchronization upserts the
 same `(device_id, session_id)` and does not add another session to totals.
 
 The report is incomplete if any currently registered PC is offline, reports an

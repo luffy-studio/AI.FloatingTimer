@@ -62,6 +62,103 @@ func setBillingTestPCs(pcs ...PC) {
 	store.Unlock()
 }
 
+func TestBillingLedgerPersistsExtensionsSnacksAndDeferredPayments(t *testing.T) {
+	configureBillingTest(t)
+	pc := PC{ID: "pc-1", Name: "PC 1", Address: "http://127.0.0.1:18081/1"}
+	setBillingTestPCs(pc)
+
+	started := time.Date(2026, time.January, 2, 16, 0, 0, 0, billingTimezone)
+	session, _, err := billingStore.prepareStart(StartSessionRequest{
+		PCID: pc.ID, Category: "PC Pro", CustomerName: "Ledger Customer", Players: 1, DurationMinutes: 30,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err = billingStore.commitStart(session, started)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if session.PurchasedAmount != 40 || session.AmountDue != 40 || session.PaymentStatus != "unpaid" {
+		t.Fatalf("unexpected deferred start billing: %+v", session)
+	}
+
+	menuItem, err := billingStore.mutateMenu(SnackMenuItem{Name: "Water", Category: "Water", UnitPrice: 20, Available: true}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := billingStore.addSnackOrder(session.ID, SnackOrderRequest{ItemID: menuItem.ID, Quantity: 2, RequestID: "snack-1"}); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := billingStore.extendSessionRecord(session.ID, pc.ID, pc.Address, 15, 20, 2700, "extension-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.PurchasedMinutes != 30 || updated.AdditionalMinutes != 15 || updated.GamingAmount != 60 || updated.SnackAmount != 40 || updated.FinalAmount != 100 {
+		t.Fatalf("unexpected extension/snack totals: %+v", updated)
+	}
+	if len(updated.Extensions) != 1 || updated.Extensions[0].AddedMinutes != 15 || updated.Extensions[0].Amount != 20 {
+		t.Fatalf("extension history was not recorded: %+v", updated.Extensions)
+	}
+
+	if _, err := billingStore.update(session.ID, "close", 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	partial, err := billingStore.addPayment(session.ID, PaymentRequest{Amount: 50, Method: "Cash", RequestID: "payment-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if partial.PaymentStatus != "partial" || partial.AmountPaid != 50 || partial.AmountDue != 50 || partial.CashPaid != 50 || partial.OnlinePaid != 0 {
+		t.Fatalf("unexpected partial payment: %+v", partial)
+	}
+	paid, err := billingStore.addPayment(session.ID, PaymentRequest{Amount: 50, Method: "UPI", RequestID: "payment-2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if paid.Status != "closed" || paid.PaymentStatus != "paid" || paid.AmountDue != 0 || paid.CashPaid != 50 || paid.OnlinePaid != 50 || len(paid.PaymentHistory) != 2 {
+		t.Fatalf("unexpected final payment state: %+v", paid)
+	}
+	retried, err := billingStore.addPayment(session.ID, PaymentRequest{Amount: 50, Method: "online", RequestID: "payment-2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(retried.PaymentHistory) != 2 || retried.AmountPaid != 100 {
+		t.Fatalf("duplicate payment retry changed the ledger: %+v", retried)
+	}
+	summary := billingStore.summary()
+	if summary.TotalRevenueCollected != 100 || summary.GamingRevenueCollected != 60 || summary.SnackRevenueCollected != 40 || summary.CashCollected != 50 || summary.OnlineCollected != 50 || summary.TotalPendingPayments != 0 || summary.PaidSessions != 1 {
+		t.Fatalf("summary did not split actual collections correctly: %+v", summary)
+	}
+	report, err := billingStore.report("2026-01-02")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.CollectedAmount != 100 || report.GamingRevenueCollected != 60 || report.SnackRevenueCollected != 40 || report.Outstanding != 0 {
+		t.Fatalf("report did not split actual collections correctly: %+v", report)
+	}
+
+	reloaded, err := billingStore.sessionByID(session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reloaded.Extensions) != 1 || len(reloaded.PaymentHistory) != 2 || len(reloaded.SnackOrders) != 1 {
+		t.Fatalf("ledger data did not survive workbook reload: %+v", reloaded)
+	}
+	f, err := excelize.OpenFile(billingStore.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	for _, sheet := range []string{"Extensions", "Payments", "Snacks", "Menu"} {
+		rows, sheetErr := f.GetRows(sheet)
+		if sheetErr != nil {
+			t.Fatal(sheetErr)
+		}
+		if len(rows) < 2 {
+			t.Fatalf("%s sheet has no persisted transaction rows: %#v", sheet, rows)
+		}
+	}
+}
+
 func TestBillingAPIIsAccessibleWithoutCredentials(t *testing.T) {
 	configureBillingTest(t)
 	mux := http.NewServeMux()
@@ -219,8 +316,8 @@ func TestLegacyBillingWorkbookMigratesAndPreservesPaymentData(t *testing.T) {
 	if len(rows) != 2 || !reflect.DeepEqual(rows[0], sessionHeaders) {
 		t.Fatalf("unexpected migrated sheet rows: %#v", rows)
 	}
-	if got := f.GetSheetList(); !reflect.DeepEqual(got, []string{"Sessions"}) {
-		t.Fatalf("expected only Sessions worksheet after migration, got %v", got)
+	if got := f.GetSheetList(); !reflect.DeepEqual(got, []string{"Sessions", "Menu", "Extensions", "Payments", "Snacks"}) {
+		t.Fatalf("expected session and ledger worksheets after migration, got %v", got)
 	}
 	for cell, want := range map[string]string{
 		"A2": sessionStart.In(billingTimezone).Format("02-01-2006"),
@@ -229,8 +326,9 @@ func TestLegacyBillingWorkbookMigratesAndPreservesPaymentData(t *testing.T) {
 		"D2": legacy.PCName,
 		"E2": "2",
 		"F2": sessionStart.In(billingTimezone).Format("15:04:05"),
-		"G2": "45",
+		"G2": "30",
 		"H2": "₹10",
+		"I2": "15",
 	} {
 		got, err := f.GetCellValue("Sessions", cell)
 		if err != nil {
@@ -286,6 +384,67 @@ func TestLegacyBillingWorkbookMigratesAndPreservesPaymentData(t *testing.T) {
 	afterDuplicate, err := billingStore.sessions("", "")
 	if err != nil || len(afterDuplicate) != 1 || len(afterDuplicate[0].payments) != 2 {
 		t.Fatalf("duplicate full payment added another transaction: %+v, %v", afterDuplicate, err)
+	}
+}
+
+func TestIntermediateExpandedSessionWorkbookMigrates(t *testing.T) {
+	directory := configureBillingTest(t)
+	billingStore.path = filepath.Join(directory, "billing.xlsx")
+	started := time.Date(2026, time.October, 31, 16, 0, 0, 0, billingTimezone)
+	created := started.Add(-time.Second)
+	session := Session{
+		ID: "S-intermediate", DeviceID: "PC-test", PCID: "pc-3", PCName: "PC3", PCAddress: "http://127.0.0.1:18081/1",
+		Category: "PC Lite", CustomerName: "Existing Customer", Players: 1, Status: "open", StartedAt: started.Format(time.RFC3339Nano),
+		ExpectedEndAt: started.Add(15 * time.Minute).Format(time.RFC3339Nano), PurchasedMinutes: 15, PurchasedAmount: 15,
+		GamingAmount: 15, FinalAmount: 15, AmountDue: 15, PaymentStatus: "unpaid", CreatedAt: created.Format(time.RFC3339Nano), UpdatedAt: created.Format(time.RFC3339Nano),
+	}
+	f := excelize.NewFile()
+	if err := f.SetSheetName("Sheet1", "Sessions"); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeRow(f, "Sessions", 1, intermediateSessionHeaders); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeRow(f, "Sessions", 2, []string{"31-10-2026", "16:00:00", session.CustomerName, session.PCName, "1", "16:00:00", "15", "0", "0", "15", "0", "15"}); err != nil {
+		t.Fatal(err)
+	}
+	metadata, err := json.Marshal(sessionMetadata{Version: 1, Session: session})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.AddComment("Sessions", excelize.Comment{Cell: "A2", Author: "OverlayTimer", Text: string(metadata)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.SaveAs(billingStore.path); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	opened, err := billingStore.openLocked()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer opened.Close()
+	rows, err := sessionRows(opened)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 || !reflect.DeepEqual(rows[0], sessionHeaders) {
+		t.Fatalf("intermediate schema was not upgraded: %#v", rows)
+	}
+	migrated, err := sessionsFromWorkbook(opened)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(migrated) != 1 || migrated[0].ID != session.ID || migrated[0].PurchasedAmount != 15 || migrated[0].AmountDue != 15 {
+		t.Fatalf("intermediate session data was not preserved: %+v", migrated)
+	}
+	for _, sheet := range []string{"Menu", "Extensions", "Payments", "Snacks"} {
+		if index, indexErr := opened.GetSheetIndex(sheet); indexErr != nil || index == -1 {
+			t.Fatalf("migration did not create %s ledger sheet: index=%d err=%v", sheet, index, indexErr)
+		}
 	}
 }
 
@@ -413,8 +572,12 @@ func TestManualPriceOverridePersistsAndCloseStopsTimerIdempotently(t *testing.T)
 	if err := json.Unmarshal(start.Body.Bytes(), &session); err != nil {
 		t.Fatal(err)
 	}
-	if session.FinalAmount != 123 || session.EstimatedAmount != entry.Amount || session.ManualPrice == nil || *session.ManualPrice != 123 {
-		t.Fatalf("manual override or catalog snapshot was not preserved: %+v", session)
+	manualQuote, quoteErr := durationForAmount(entry.Category, entry.Players, 123)
+	if quoteErr != nil {
+		t.Fatal(quoteErr)
+	}
+	if session.FinalAmount != 123 || session.PurchasedMinutes != manualQuote.DurationMinutes || session.EstimatedAmount != manualQuote.Amount || session.ManualPrice == nil || *session.ManualPrice != 123 {
+		t.Fatalf("manual amount or derived duration was not preserved: %+v", session)
 	}
 	closed := httptest.NewRecorder()
 	mux.ServeHTTP(closed, httptest.NewRequest(http.MethodPost, "/api/sessions/"+session.ID+"/close", strings.NewReader(`{}`)))
@@ -502,8 +665,8 @@ func TestSessionStartAPIStartsOnlySelectedSharedHostTimer(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &started); err != nil {
 		t.Fatal(err)
 	}
-	if started.AmountPaid != entry.Amount || started.PaymentStatus != "paid" {
-		t.Fatalf("session did not record the full selected price: %+v", started)
+	if started.AmountPaid != 0 || started.AmountDue != entry.Amount || started.PaymentStatus != "unpaid" {
+		t.Fatalf("session did not create a deferred bill: %+v", started)
 	}
 	mu.Lock()
 	gotRequests := append([]string(nil), (*requests)...)
@@ -536,7 +699,7 @@ func TestSessionStartAPIStartsOnlySelectedSharedHostTimer(t *testing.T) {
 		"D2": started.PCName,
 		"E2": strconv.Itoa(started.Players),
 		"G2": strconv.Itoa(entry.DurationMinutes),
-		"H2": "₹" + strconv.Itoa(entry.Amount),
+		"H2": "₹0",
 	}
 	createdAt, err := sessionTimestamp(started.CreatedAt)
 	if err != nil {
@@ -709,7 +872,7 @@ func TestSessionExtensionUpdatesBillingAndTimer(t *testing.T) {
 	if err != nil || len(sessions) != 1 {
 		t.Fatalf("expected 1 session, got %v (err: %v)", sessions, err)
 	}
-	if sessions[0].PurchasedMinutes != 30 || sessions[0].AmountPaid != 30 {
+	if sessions[0].PurchasedMinutes != 30 || sessions[0].AmountPaid != 0 || sessions[0].AmountDue != 30 {
 		t.Fatalf("unexpected initial billing: %+v", sessions[0])
 	}
 
@@ -729,9 +892,8 @@ func TestSessionExtensionUpdatesBillingAndTimer(t *testing.T) {
 	if !extResult.SessionFound || extResult.Session == nil {
 		t.Fatalf("expected session_found=true, got %+v", extResult)
 	}
-	if extResult.Session.PurchasedMinutes != 45 || extResult.Session.AmountPaid != 45 {
-		t.Fatalf("expected 45 purchased minutes and 45 amount paid, got minutes=%d amount=%d",
-			extResult.Session.PurchasedMinutes, extResult.Session.AmountPaid)
+	if extResult.Session.PurchasedMinutes != 30 || extResult.Session.AdditionalMinutes != 15 || extResult.Session.AmountPaid != 0 || len(extResult.Session.Extensions) != 1 {
+		t.Fatalf("expected 30 purchased + 15 additional minutes and an unpaid extension ledger entry, got session=%+v", extResult.Session)
 	}
 
 	// Verify overlay timer was tweaked by 900s
@@ -746,7 +908,7 @@ func TestSessionExtensionUpdatesBillingAndTimer(t *testing.T) {
 	if err != nil || len(sessionsAfter) != 1 {
 		t.Fatalf("expected exactly 1 row in workbook, got %d rows", len(sessionsAfter))
 	}
-	if sessionsAfter[0].PurchasedMinutes != 45 || sessionsAfter[0].AmountPaid != 45 {
+	if sessionsAfter[0].PurchasedMinutes != 30 || sessionsAfter[0].AdditionalMinutes != 15 || sessionsAfter[0].AmountPaid != 0 || sessionsAfter[0].AmountDue != 45 {
 		t.Fatalf("workbook row did not update: %+v", sessionsAfter[0])
 	}
 
@@ -758,13 +920,32 @@ func TestSessionExtensionUpdatesBillingAndTimer(t *testing.T) {
 		t.Fatalf("idempotent retry failed: %d %s", extResp2.Code, extResp2.Body.String())
 	}
 	sessionsAfterRetry, _ := billingStore.sessions("", "")
-	if sessionsAfterRetry[0].PurchasedMinutes != 45 || sessionsAfterRetry[0].AmountPaid != 45 {
+	if sessionsAfterRetry[0].PurchasedMinutes != 30 || sessionsAfterRetry[0].AdditionalMinutes != 15 || sessionsAfterRetry[0].AmountPaid != 0 {
 		t.Fatalf("retry modified session: %+v", sessionsAfterRetry[0])
+	}
+
+	// 4. A manually entered ₹20 extension resolves to 20 minutes for PC Lite,
+	// and is recorded separately from the original purchase and prior extension.
+	amountExt := `{"pc_id":"pc-3","amount":20,"request_id":"req-ext-amount"}`
+	amountReq := httptest.NewRequest(http.MethodPost, "/api/sessions/extend", strings.NewReader(amountExt))
+	amountResp := httptest.NewRecorder()
+	mux.ServeHTTP(amountResp, amountReq)
+	if amountResp.Code != http.StatusOK {
+		t.Fatalf("manual amount extension returned %d: %s", amountResp.Code, amountResp.Body.String())
+	}
+	var amountResult ExtendSessionResponse
+	if err := json.Unmarshal(amountResp.Body.Bytes(), &amountResult); err != nil {
+		t.Fatal(err)
+	}
+	if amountResult.Session == nil || amountResult.Session.PurchasedMinutes != 30 ||
+		amountResult.Session.AdditionalMinutes != 35 || amountResult.Session.AdditionalAmount != 35 ||
+		amountResult.Session.FinalAmount != 65 {
+		t.Fatalf("manual amount extension was not split and priced correctly: %+v", amountResult.Session)
 	}
 
 	// Verify requests sent to timer
 	if !reflect.DeepEqual(*requests, []string{
-		"GET /1/status", "POST /1/set", "POST /1/play", "POST /1/billing-session", "POST /1/tweak", "GET /1/status",
+		"GET /1/status", "POST /1/set", "POST /1/play", "POST /1/billing-session", "POST /1/tweak", "GET /1/status", "POST /1/tweak",
 	}) {
 		t.Fatalf("unexpected timer requests: %v", *requests)
 	}
@@ -844,8 +1025,8 @@ func TestConcurrentSessionsAndExtensionsStayIsolatedByEndpoint(t *testing.T) {
 		if !result.SessionFound || result.Session == nil {
 			t.Fatalf("extension did not resolve a started session: %+v", result)
 		}
-		if (result.Session.PCID == "pc-a" && result.Session.PurchasedMinutes != 45) ||
-			(result.Session.PCID == "pc-b" && result.Session.PurchasedMinutes != 75) {
+		if (result.Session.PCID == "pc-a" && (result.Session.PurchasedMinutes != 30 || result.Session.AdditionalMinutes != 15)) ||
+			(result.Session.PCID == "pc-b" && (result.Session.PurchasedMinutes != 60 || result.Session.AdditionalMinutes != 15)) {
 			t.Fatalf("extension updated the wrong session or duration: %+v", result.Session)
 		}
 	}
@@ -865,7 +1046,7 @@ func TestConcurrentSessionsAndExtensionsStayIsolatedByEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if retried.Session == nil || retried.Session.PurchasedMinutes != 45 {
+	if retried.Session == nil || retried.Session.PurchasedMinutes != 30 || retried.Session.AdditionalMinutes != 15 {
 		t.Fatalf("retry changed the extension result: %+v", retried)
 	}
 	muA.Lock()
@@ -879,7 +1060,7 @@ func TestConcurrentSessionsAndExtensionsStayIsolatedByEndpoint(t *testing.T) {
 		t.Fatalf("expected two workbook sessions without duplicate rows; got %d, err=%v", len(sessions), err)
 	}
 	for _, session := range sessions {
-		if session.PCID == "pc-b" && (session.PurchasedMinutes != 75 || session.AmountPaid != 115) {
+		if session.PCID == "pc-b" && (session.PurchasedMinutes != 60 || session.AdditionalMinutes != 15 || session.AmountPaid != 0 || session.AmountDue != 115) {
 			t.Fatalf("PC B session has an unexpected independent extension: %+v", session)
 		}
 	}
@@ -914,6 +1095,140 @@ func TestSessionExtensionWorkbookFailureRollsBackTimer(t *testing.T) {
 	sessions, readErr := billingStore.sessions("", "")
 	if readErr != nil || len(sessions) != 1 || sessions[0].PurchasedMinutes != 30 {
 		t.Fatalf("failed extension modified the workbook: sessions=%+v err=%v", sessions, readErr)
+	}
+}
+
+func TestCompleteBillingLedgerDeferredPaymentsAndSnacks(t *testing.T) {
+	configureBillingTest(t)
+	server, _, _, _ := newBillingTimerServer(t, false)
+	setBillingTestPCs(PC{ID: "pc-3", Name: "PC 3", Address: server.URL + "/1"})
+	mux := http.NewServeMux()
+	registerBillingHandlers(mux)
+
+	startBody := `{"pc_id":"pc-3","category":"PC Lite","customer_name":"Ledger Customer","players":1,"duration_minutes":30}`
+	startReq := httptest.NewRequest(http.MethodPost, "/api/sessions", strings.NewReader(startBody))
+	startResp := httptest.NewRecorder()
+	mux.ServeHTTP(startResp, startReq)
+	if startResp.Code != http.StatusCreated {
+		t.Fatalf("start returned %d: %s", startResp.Code, startResp.Body.String())
+	}
+	var session Session
+	if err := json.Unmarshal(startResp.Body.Bytes(), &session); err != nil {
+		t.Fatal(err)
+	}
+	if session.FinalAmount != 30 || session.AmountPaid != 0 || session.AmountDue != 30 || session.PaymentStatus != "unpaid" {
+		t.Fatalf("unexpected deferred start ledger: %+v", session)
+	}
+
+	menuReq := httptest.NewRequest(http.MethodPost, "/api/snacks/menu", strings.NewReader(`{"name":"Water","category":"Water","unit_price":20,"available":true}`))
+	menuResp := httptest.NewRecorder()
+	mux.ServeHTTP(menuResp, menuReq)
+	if menuResp.Code != http.StatusOK {
+		t.Fatalf("menu create returned %d: %s", menuResp.Code, menuResp.Body.String())
+	}
+	var item SnackMenuItem
+	if err := json.Unmarshal(menuResp.Body.Bytes(), &item); err != nil {
+		t.Fatal(err)
+	}
+
+	snackBody := fmt.Sprintf(`{"item_id":%q,"quantity":2,"request_id":"snack-1"}`, item.ID)
+	snackReq := httptest.NewRequest(http.MethodPost, "/api/sessions/"+session.ID+"/snacks", strings.NewReader(snackBody))
+	snackResp := httptest.NewRecorder()
+	mux.ServeHTTP(snackResp, snackReq)
+	if snackResp.Code != http.StatusOK {
+		t.Fatalf("snack order returned %d: %s", snackResp.Code, snackResp.Body.String())
+	}
+	updatedMenu := fmt.Sprintf(`{"id":%q,"name":"Water","category":"Water","unit_price":30,"available":true}`, item.ID)
+	menuUpdateReq := httptest.NewRequest(http.MethodPut, "/api/snacks/menu", strings.NewReader(updatedMenu))
+	menuUpdateResp := httptest.NewRecorder()
+	mux.ServeHTTP(menuUpdateResp, menuUpdateReq)
+	if menuUpdateResp.Code != http.StatusOK {
+		t.Fatalf("menu update returned %d: %s", menuUpdateResp.Code, menuUpdateResp.Body.String())
+	}
+
+	extReq := httptest.NewRequest(http.MethodPost, "/api/sessions/extend", strings.NewReader(`{"pc_id":"pc-3","minutes":34,"request_id":"extension-1"}`))
+	extResp := httptest.NewRecorder()
+	mux.ServeHTTP(extResp, extReq)
+	if extResp.Code != http.StatusOK {
+		t.Fatalf("extension returned %d: %s", extResp.Code, extResp.Body.String())
+	}
+	var extension ExtendSessionResponse
+	if err := json.Unmarshal(extResp.Body.Bytes(), &extension); err != nil {
+		t.Fatal(err)
+	}
+	if extension.Session == nil || extension.Session.AdditionalMinutes != 34 || extension.Session.AdditionalAmount != 34 || extension.Session.FinalAmount != 104 || extension.Session.AmountPaid != 0 || len(extension.Session.Extensions) != 1 {
+		t.Fatalf("unexpected extension ledger: %+v", extension.Session)
+	}
+
+	pay := func(amount int, method, requestID string) Session {
+		body := fmt.Sprintf(`{"amount":%d,"method":%q,"request_id":%q}`, amount, method, requestID)
+		req := httptest.NewRequest(http.MethodPost, "/api/sessions/"+session.ID+"/pay", strings.NewReader(body))
+		resp := httptest.NewRecorder()
+		mux.ServeHTTP(resp, req)
+		if resp.Code != http.StatusOK {
+			t.Fatalf("payment returned %d: %s", resp.Code, resp.Body.String())
+		}
+		var got Session
+		if err := json.Unmarshal(resp.Body.Bytes(), &got); err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	paid := pay(50, "cash", "payment-1")
+	if paid.AmountPaid != 50 || paid.CashPaid != 50 || paid.AmountDue != 54 || paid.PaymentStatus != "partial" || len(paid.PaymentHistory) != 1 {
+		t.Fatalf("unexpected partial payment: %+v", paid)
+	}
+	closeReq := httptest.NewRequest(http.MethodPost, "/api/sessions/"+session.ID+"/close", strings.NewReader(`{}`))
+	closeResp := httptest.NewRecorder()
+	mux.ServeHTTP(closeResp, closeReq)
+	if closeResp.Code != http.StatusOK {
+		t.Fatalf("close returned %d: %s", closeResp.Code, closeResp.Body.String())
+	}
+	paid = pay(54, "online", "payment-2")
+	if paid.AmountPaid != 104 || paid.OnlinePaid != 54 || paid.AmountDue != 0 || paid.PaymentStatus != "paid" || len(paid.PaymentHistory) != 2 {
+		t.Fatalf("unexpected final payment: %+v", paid)
+	}
+	duplicate := pay(54, "online", "payment-2")
+	if len(duplicate.PaymentHistory) != 2 {
+		t.Fatalf("duplicate payment was charged twice: %+v", duplicate)
+	}
+
+	closed, err := billingStore.sessionByID(session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if closed.Status != "closed" || len(closed.Extensions) != 1 || len(closed.SnackOrders) != 1 || closed.SnackOrders[0].UnitPrice != 20 || len(closed.PaymentHistory) != 2 {
+		t.Fatalf("closed ledger lost history: %+v", closed)
+	}
+	summary := billingStore.summary()
+	if summary.TotalBillsGenerated != 1 || summary.TotalRevenueCollected != 104 || summary.TotalPendingPayments != 0 || summary.CashCollected != 50 || summary.OnlineCollected != 54 || summary.SnackSales != 40 || summary.PaidSessions != 1 {
+		t.Fatalf("summary did not separate bills, collections, dues, and snacks: %+v", summary)
+	}
+	startedAt, err := sessionTimestamp(closed.StartedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	report, err := billingStore.report(startedAt.In(billingTimezone).Format("2006-01-02"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.BilledAmount != 104 || report.CollectedAmount != 104 || report.Outstanding != 0 || report.CashCollected != 50 || report.OnlineCollected != 54 || report.SnackSales != 40 || report.PaidSessions != 1 {
+		t.Fatalf("report did not match session ledger: %+v", report)
+	}
+
+	f, err := excelize.OpenFile(billingStore.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	for _, sheet := range []string{"Sessions", "Extensions", "Payments", "Snacks", "Menu"} {
+		rows, rowErr := f.GetRows(sheet)
+		if rowErr != nil || len(rows) < 2 {
+			t.Fatalf("ledger sheet %s was not persisted: rows=%v err=%v", sheet, rows, rowErr)
+		}
+	}
+	if got := len(closed.Extensions); got != 1 {
+		t.Fatalf("expected one extension transaction, got %d", got)
 	}
 }
 

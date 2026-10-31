@@ -43,31 +43,41 @@ type BillingConfig struct {
 	DeviceID        string `json:"device_id,omitempty"`
 }
 type Session struct {
-	ID                    string `json:"id"`
-	DeviceID              string `json:"device_id,omitempty"`
-	SyncedUpdatedAt       string `json:"sync_updated_at,omitempty"`
-	PCID                  string `json:"pc_id"`
-	PCName                string `json:"pc_name"`
-	PCAddress             string `json:"pc_address"`
-	Category              string `json:"category"`
-	CustomerName          string `json:"customer_name"`
-	Players               int    `json:"players"`
-	Status                string `json:"status"`
-	StartedAt             string `json:"started_at"`
-	ExpectedEndAt         string `json:"expected_end_at"`
-	EndedAt               string `json:"ended_at,omitempty"`
-	PurchasedMinutes      int    `json:"purchased_minutes"`
-	AdditionalMinutes     int    `json:"additional_minutes"`
-	ActualDurationSeconds int    `json:"actual_duration_seconds"`
-	PricingSnapshot       string `json:"pricing_snapshot"`
-	ManualPrice           *int   `json:"manual_price,omitempty"`
-	EstimatedAmount       int    `json:"estimated_amount"`
-	FinalAmount           int    `json:"final_amount"`
-	AmountPaid            int    `json:"amount_paid"`
-	PaymentStatus         string `json:"payment_status"`
-	PaymentAt             string `json:"payment_at,omitempty"`
-	CreatedAt             string `json:"created_at"`
-	UpdatedAt             string `json:"updated_at"`
+	ID                    string                 `json:"id"`
+	DeviceID              string                 `json:"device_id,omitempty"`
+	SyncedUpdatedAt       string                 `json:"sync_updated_at,omitempty"`
+	PCID                  string                 `json:"pc_id"`
+	PCName                string                 `json:"pc_name"`
+	PCAddress             string                 `json:"pc_address"`
+	Category              string                 `json:"category"`
+	CustomerName          string                 `json:"customer_name"`
+	Players               int                    `json:"players"`
+	Status                string                 `json:"status"`
+	StartedAt             string                 `json:"started_at"`
+	ExpectedEndAt         string                 `json:"expected_end_at"`
+	EndedAt               string                 `json:"ended_at,omitempty"`
+	PurchasedMinutes      int                    `json:"purchased_minutes"`
+	AdditionalMinutes     int                    `json:"additional_minutes"`
+	PurchasedAmount       int                    `json:"purchased_amount"`
+	AdditionalAmount      int                    `json:"additional_amount"`
+	GamingAmount          int                    `json:"gaming_amount"`
+	SnackAmount           int                    `json:"snack_amount"`
+	ActualDurationSeconds int                    `json:"actual_duration_seconds"`
+	PricingSnapshot       string                 `json:"pricing_snapshot"`
+	ManualPrice           *int                   `json:"manual_price,omitempty"`
+	EstimatedAmount       int                    `json:"estimated_amount"`
+	FinalAmount           int                    `json:"final_amount"`
+	AmountPaid            int                    `json:"amount_paid"`
+	CashPaid              int                    `json:"cash_paid"`
+	OnlinePaid            int                    `json:"online_paid"`
+	AmountDue             int                    `json:"amount_due"`
+	PaymentStatus         string                 `json:"payment_status"`
+	PaymentAt             string                 `json:"payment_at,omitempty"`
+	CreatedAt             string                 `json:"created_at"`
+	UpdatedAt             string                 `json:"updated_at"`
+	Extensions            []ExtensionTransaction `json:"extensions,omitempty"`
+	PaymentHistory        []PaymentTransaction   `json:"payment_history,omitempty"`
+	SnackOrders           []SnackOrder           `json:"snack_orders,omitempty"`
 	payments              []paymentRecord
 }
 type billingSessionLink struct {
@@ -80,7 +90,10 @@ type paymentRecord struct {
 	Timestamp        string `json:"timestamp"`
 	Amount           int    `json:"amount"`
 	Status           string `json:"status"`
+	Method           string `json:"method,omitempty"`
+	RequestID        string `json:"request_id,omitempty"`
 	ExtensionMinutes int    `json:"extension_minutes,omitempty"`
+	ExtensionAmount  int    `json:"extension_amount,omitempty"`
 	RemainingSeconds int    `json:"remaining_seconds,omitempty"`
 }
 
@@ -186,10 +199,21 @@ type sessionMetadata struct {
 	Payments []paymentRecord `json:"payments,omitempty"`
 }
 type BillingSummary struct {
-	Enabled             bool   `json:"enabled"`
-	TodayCollected      int    `json:"today_collected"`
-	OpenSessions        int    `json:"open_sessions"`
-	ConfigurationStatus string `json:"configuration_status"`
+	Enabled                bool   `json:"enabled"`
+	TodayCollected         int    `json:"today_collected"`
+	TotalBillsGenerated    int    `json:"total_bills_generated"`
+	TotalRevenueCollected  int    `json:"total_revenue_collected"`
+	GamingRevenueCollected int    `json:"gaming_revenue_collected"`
+	SnackRevenueCollected  int    `json:"snack_revenue_collected"`
+	TotalPendingPayments   int    `json:"total_pending_payments"`
+	UnpaidSessions         int    `json:"unpaid_sessions"`
+	PartiallyPaidSessions  int    `json:"partially_paid_sessions"`
+	PaidSessions           int    `json:"paid_sessions"`
+	CashCollected          int    `json:"cash_collected"`
+	OnlineCollected        int    `json:"online_collected"`
+	SnackSales             int    `json:"snack_sales"`
+	OpenSessions           int    `json:"open_sessions"`
+	ConfigurationStatus    string `json:"configuration_status"`
 }
 type BillingSyncExport struct {
 	DeviceID string    `json:"device_id"`
@@ -218,31 +242,44 @@ type BillingDeviceStatus struct {
 	Error            string `json:"error,omitempty"`
 }
 type BillingReport struct {
-	Date                string                `json:"date"`
-	Timezone            string                `json:"timezone"`
-	Complete            bool                  `json:"complete"`
-	SystemCount         int                   `json:"system_count"`
-	SessionCount        int                   `json:"session_count"`
-	UniqueCustomerCount int                   `json:"unique_customer_count"`
-	CustomerCount       int                   `json:"customer_count"`
-	BilledAmount        int                   `json:"billed_amount"`
-	CollectedAmount     int                   `json:"collected_amount"`
-	Revenue             int                   `json:"revenue"`
-	Outstanding         int                   `json:"outstanding"`
-	PCs                 []BillingReportPC     `json:"pcs"`
-	Records             []Session             `json:"records"`
-	Devices             []BillingDeviceStatus `json:"devices"`
+	Date                   string                `json:"date"`
+	Timezone               string                `json:"timezone"`
+	Complete               bool                  `json:"complete"`
+	SystemCount            int                   `json:"system_count"`
+	SessionCount           int                   `json:"session_count"`
+	UniqueCustomerCount    int                   `json:"unique_customer_count"`
+	CustomerCount          int                   `json:"customer_count"`
+	BilledAmount           int                   `json:"billed_amount"`
+	CollectedAmount        int                   `json:"collected_amount"`
+	Revenue                int                   `json:"revenue"`
+	GamingRevenueCollected int                   `json:"gaming_revenue_collected"`
+	SnackRevenueCollected  int                   `json:"snack_revenue_collected"`
+	Outstanding            int                   `json:"outstanding"`
+	CashCollected          int                   `json:"cash_collected"`
+	OnlineCollected        int                   `json:"online_collected"`
+	SnackSales             int                   `json:"snack_sales"`
+	UnpaidSessions         int                   `json:"unpaid_sessions"`
+	PartiallyPaidSessions  int                   `json:"partially_paid_sessions"`
+	PaidSessions           int                   `json:"paid_sessions"`
+	PCs                    []BillingReportPC     `json:"pcs"`
+	Records                []Session             `json:"records"`
+	Devices                []BillingDeviceStatus `json:"devices"`
 }
 type BillingReportPC struct {
-	DeviceID        string `json:"device_id,omitempty"`
-	PCID            string `json:"pc_id"`
-	PCName          string `json:"pc_name"`
-	SessionCount    int    `json:"session_count"`
-	CustomerCount   int    `json:"customer_count"`
-	BilledAmount    int    `json:"billed_amount"`
-	CollectedAmount int    `json:"collected_amount"`
-	Revenue         int    `json:"revenue"`
-	Outstanding     int    `json:"outstanding"`
+	DeviceID               string `json:"device_id,omitempty"`
+	PCID                   string `json:"pc_id"`
+	PCName                 string `json:"pc_name"`
+	SessionCount           int    `json:"session_count"`
+	CustomerCount          int    `json:"customer_count"`
+	BilledAmount           int    `json:"billed_amount"`
+	CollectedAmount        int    `json:"collected_amount"`
+	Revenue                int    `json:"revenue"`
+	GamingRevenueCollected int    `json:"gaming_revenue_collected"`
+	SnackRevenueCollected  int    `json:"snack_revenue_collected"`
+	Outstanding            int    `json:"outstanding"`
+	CashCollected          int    `json:"cash_collected"`
+	OnlineCollected        int    `json:"online_collected"`
+	SnackSales             int    `json:"snack_sales"`
 }
 type StartSessionRequest struct {
 	PCID            string `json:"pc_id"`
@@ -263,7 +300,14 @@ type BillingStore struct {
 }
 
 var billingStore BillingStore
-var sessionHeaders = []string{"Date", "Time", "Customer", "System", "Players", "Start Time", "Purchased Minutes", "Amount Paid"}
+var sessionHeaders = []string{"Date", "Time", "Customer", "System", "Players", "Start Time", "Purchased Minutes", "Amount Paid", "Additional Minutes", "Purchased Amount", "Additional Amount", "Total Amount", "Cash Received", "Online Received", "Amount Due", "Payment Status", "End Time", "Session ID"}
+var previousSessionHeaders = []string{"Date", "Time", "Customer", "System", "Players", "Start Time", "Purchased Minutes", "Amount Paid"}
+
+// intermediateSessionHeaders was written by the first billing expansion before
+// cash/online, due, status, end-time, and session-ID columns were added. Its
+// row comments already contain the authoritative session metadata, so it can
+// be upgraded without guessing or discarding historical records.
+var intermediateSessionHeaders = []string{"Date", "Time", "Customer", "System", "Players", "Start Time", "Purchased Minutes", "Amount Paid", "Additional Minutes", "Purchased Amount", "Additional Amount", "Total Amount"}
 var legacySessionHeaders = []string{"Session ID", "System ID", "System", "Address", "Category", "Customer", "Players", "Status", "Start", "Expected End", "End", "Purchased Minutes", "Additional Minutes", "Pricing Snapshot", "Estimated Amount", "Final Amount", "Amount Paid", "Payment Status", "Payment At", "Created At", "Updated At"}
 var paymentHeaders = []string{"Payment ID", "Session ID", "Timestamp", "Amount", "Payment Status"}
 
@@ -341,6 +385,15 @@ func (s *BillingStore) openLocked() (*excelize.File, error) {
 		_ = f.Close()
 		return nil, err
 	}
+	if changed, err := ensureLedgerSheetsLocked(f); err != nil {
+		_ = f.Close()
+		return nil, err
+	} else if changed {
+		if err := s.saveLocked(f); err != nil {
+			_ = f.Close()
+			return nil, err
+		}
+	}
 	return f, nil
 }
 
@@ -382,11 +435,36 @@ func (s *BillingStore) ensureSessionSchemaLocked(f *excelize.File) error {
 	switch {
 	case equalStrings(rows[0], sessionHeaders):
 		return nil
+	case equalStrings(rows[0], previousSessionHeaders), equalStrings(rows[0], intermediateSessionHeaders):
+		return s.upgradeCompactSessionSchemaLocked(f)
 	case equalStrings(rows[0], legacySessionHeaders):
 		return s.migrateLegacyWorkbookLocked(f, rows)
 	default:
 		return fmt.Errorf("billing workbook has an unsupported Sessions header; no data was changed")
 	}
+}
+
+func (s *BillingStore) upgradeCompactSessionSchemaLocked(f *excelize.File) error {
+	stored, err := storedSessionsFromWorkbook(f)
+	if err != nil {
+		return err
+	}
+	if err := writeRow(f, "Sessions", 1, sessionHeaders); err != nil {
+		return err
+	}
+	for _, item := range stored {
+		x := item.Session
+		if x.PurchasedAmount == 0 && x.AdditionalAmount == 0 {
+			x.PurchasedAmount = x.FinalAmount
+		}
+		if err := writeSessionRow(f, "Sessions", item.Row, x, true); err != nil {
+			return err
+		}
+	}
+	if err := formatSessionsSheet(f, "Sessions", len(stored)+1); err != nil {
+		return err
+	}
+	return s.saveLocked(f)
 }
 
 func (s *BillingStore) migrateLegacyWorkbookLocked(f *excelize.File, rows [][]string) error {
@@ -457,6 +535,9 @@ func (s *BillingStore) migrateLegacyWorkbookLocked(f *excelize.File, rows [][]st
 		return err
 	}
 	for i, session := range sessions {
+		if session.PurchasedAmount == 0 && session.AdditionalAmount == 0 {
+			session.PurchasedAmount = session.FinalAmount
+		}
 		if err := writeSessionRow(f, replacementSheet, i+2, session, false); err != nil {
 			return fmt.Errorf("could not migrate legacy session %q: %w", session.ID, err)
 		}
@@ -510,10 +591,10 @@ func formatSessionsSheet(f *excelize.File, sheet string, rows int) error {
 	if err != nil {
 		return err
 	}
-	if err := f.SetCellStyle(sheet, "A1", "H1", header); err != nil {
+	if err := f.SetCellStyle(sheet, "A1", fmt.Sprintf("%s1", column(len(sessionHeaders))), header); err != nil {
 		return err
 	}
-	widths := []float64{14, 12, 24, 22, 10, 14, 20, 16}
+	widths := []float64{14, 12, 24, 22, 10, 14, 20, 16, 20, 20, 20, 16, 16, 16, 16, 18, 24, 34}
 	for i, width := range widths {
 		if err := f.SetColWidth(sheet, column(i+1), column(i+1), width); err != nil {
 			return err
@@ -550,6 +631,7 @@ func formatSessionDataRows(f *excelize.File, sheet string, firstRow, lastRow int
 		{"B" + first, "B" + last, timeStyle},
 		{"F" + first, "F" + last, timeStyle},
 		{"H" + first, "H" + last, amountStyle},
+		{"J" + first, "O" + last, amountStyle},
 	} {
 		if err := f.SetCellStyle(sheet, item.start, item.end, item.style); err != nil {
 			return err
@@ -576,6 +658,9 @@ func column(n int) string {
 	return v
 }
 func (s *BillingStore) saveLocked(f *excelize.File) error {
+	if err := s.refreshLedgerSheetsLocked(f); err != nil {
+		return fmt.Errorf("could not refresh billing ledger sheets: %w", err)
+	}
 	if err := os.MkdirAll(s.backupDir, 0755); err != nil {
 		return err
 	}
@@ -651,7 +736,9 @@ func writeSessionRow(f *excelize.File, sheet string, row int, x Session, replace
 	}
 	values := []interface{}{
 		excelDateSerial(started), excelTimeFraction(started), x.CustomerName, x.PCName,
-		x.Players, excelTimeFraction(started), x.PurchasedMinutes + x.AdditionalMinutes, x.AmountPaid,
+		x.Players, excelTimeFraction(started), x.PurchasedMinutes, x.AmountPaid,
+		x.AdditionalMinutes, x.PurchasedAmount, x.AdditionalAmount, x.FinalAmount,
+		x.CashPaid, x.OnlinePaid, x.AmountDue, x.PaymentStatus, x.EndedAt, x.ID,
 	}
 	for i, value := range values {
 		cell := fmt.Sprintf("%s%d", column(i+1), row)
@@ -709,7 +796,7 @@ func storedSessionsFromWorkbook(f *excelize.File) ([]storedBillingSession, error
 	if err != nil {
 		return nil, err
 	}
-	if len(rows) == 0 || !equalStrings(rows[0], sessionHeaders) {
+	if len(rows) == 0 || (!equalStrings(rows[0], sessionHeaders) && !equalStrings(rows[0], previousSessionHeaders) && !equalStrings(rows[0], intermediateSessionHeaders)) {
 		return nil, errors.New("billing workbook has an invalid Sessions header")
 	}
 	comments, err := f.GetComments("Sessions")
@@ -737,6 +824,26 @@ func storedSessionsFromWorkbook(f *excelize.File) ([]storedBillingSession, error
 			return nil, fmt.Errorf("billing row %d has duplicate session metadata", row)
 		}
 		metadata.Session.payments = metadata.Payments
+		if metadata.Session.PurchasedAmount == 0 && metadata.Session.AdditionalAmount == 0 {
+			metadata.Session.PurchasedAmount = metadata.Session.FinalAmount
+		}
+		if len(metadata.Session.PaymentHistory) == 0 {
+			for _, payment := range metadata.Payments {
+				if payment.ExtensionMinutes > 0 || payment.Amount <= 0 {
+					continue
+				}
+				method := payment.Method
+				if method == "" {
+					method = "cash"
+				}
+				metadata.Session.PaymentHistory = append(metadata.Session.PaymentHistory, PaymentTransaction{
+					ID: payment.ID, SessionID: metadata.Session.ID, Timestamp: payment.Timestamp,
+					Amount: payment.Amount, Method: method, PCID: metadata.Session.PCID,
+					PCName: metadata.Session.PCName, CustomerName: metadata.Session.CustomerName,
+				})
+			}
+		}
+		normalizeSessionLedger(&metadata.Session)
 		metadataByRow[row] = metadata
 	}
 	result := make([]storedBillingSession, 0, len(rows)-1)
@@ -838,12 +945,30 @@ func (s *BillingStore) prepareStart(q StartSessionRequest) (Session, PC, error) 
 	if q.Players < 1 || q.Players > 4 {
 		return Session{}, PC{}, errors.New("players must be between 1 and 4")
 	}
-	entry, err := lookupPrice(q.Category, q.Players, q.DurationMinutes)
+	category, err := resolveSessionCategory(pc, q.Category)
 	if err != nil {
 		return Session{}, PC{}, err
 	}
-	if q.ManualPrice != nil && (*q.ManualPrice < 0 || *q.ManualPrice > 9999999) {
-		return Session{}, PC{}, errors.New("manual price must be between 0 and 9999999 INR")
+	if q.DurationMinutes < 1 || q.DurationMinutes > 1440 {
+		return Session{}, PC{}, errors.New("duration must be between 1 and 1440 minutes")
+	}
+	estimatedQuote, err := quoteForDuration(category, q.Players, q.DurationMinutes)
+	if err != nil {
+		return Session{}, PC{}, err
+	}
+	quote := estimatedQuote
+	if q.ManualPrice != nil && (*q.ManualPrice < minimumSessionCharge || *q.ManualPrice > 9999999) {
+		return Session{}, PC{}, fmt.Errorf("manual price must be between ₹%d and ₹9999999", minimumSessionCharge)
+	}
+	if q.ManualPrice != nil {
+		quote, err = durationForAmount(category, q.Players, *q.ManualPrice)
+		if err != nil {
+			return Session{}, PC{}, err
+		}
+		estimatedQuote, err = quoteForDuration(category, q.Players, quote.DurationMinutes)
+		if err != nil {
+			return Session{}, PC{}, err
+		}
 	}
 	f, err := s.openLocked()
 	if err != nil {
@@ -863,20 +988,21 @@ func (s *BillingStore) prepareStart(q StartSessionRequest) (Session, PC, error) 
 	if err != nil {
 		return Session{}, PC{}, fmt.Errorf("could not generate a session ID: %w", err)
 	}
-	finalAmount := entry.Amount
-	priceSnapshot := pricingSnapshot(entry)
+	finalAmount := quote.Amount
+	priceSnapshot := pricingSnapshot(PriceEntry{Category: quote.Category, Players: quote.Players, DurationMinutes: quote.DurationMinutes, Amount: quote.Amount, Note: quote.Note})
 	if q.ManualPrice != nil {
 		finalAmount = *q.ManualPrice
-		priceSnapshot += fmt.Sprintf("; manual override ₹%d", *q.ManualPrice)
+		priceSnapshot += fmt.Sprintf("; manual amount ₹%d", *q.ManualPrice)
 	}
 	x := Session{
 		ID: sessionID, PCID: pc.ID,
-		PCName: pc.Name, PCAddress: pc.Address, Category: q.Category,
+		PCName: pc.Name, PCAddress: pc.Address, Category: category,
 		CustomerName: q.CustomerName, Players: q.Players, Status: "open",
-		PurchasedMinutes: q.DurationMinutes, PricingSnapshot: priceSnapshot, ManualPrice: q.ManualPrice,
-		EstimatedAmount: entry.Amount, FinalAmount: finalAmount, AmountPaid: finalAmount,
-		PaymentStatus: "paid",
+		PurchasedMinutes: quote.DurationMinutes, PricingSnapshot: priceSnapshot, ManualPrice: q.ManualPrice,
+		PurchasedAmount: finalAmount, GamingAmount: finalAmount, FinalAmount: finalAmount,
+		AmountPaid: 0, AmountDue: finalAmount, PaymentStatus: "unpaid",
 	}
+	x.EstimatedAmount = estimatedQuote.Amount
 	return x, pc, nil
 }
 
@@ -914,8 +1040,8 @@ func (s *BillingStore) commitStart(x Session, startedAt time.Time) (Session, err
 	x.DeviceID = s.deviceID
 	x.CreatedAt = time.Now().In(billingTimezone).Format(time.RFC3339Nano)
 	x.UpdatedAt = x.CreatedAt
-	x.PaymentAt = startedAt.In(billingTimezone).Format(time.RFC3339Nano)
-	x.StartedAt = x.PaymentAt
+	x.PaymentAt = ""
+	x.StartedAt = startedAt.In(billingTimezone).Format(time.RFC3339Nano)
 	x.ExpectedEndAt = startedAt.Add(time.Duration(x.PurchasedMinutes) * time.Minute).Format(time.RFC3339Nano)
 	rows, err := sessionRows(f)
 	if err != nil {
@@ -1133,17 +1259,35 @@ func (s *BillingStore) summary() BillingSummary {
 	}
 	today := time.Now().In(billingTimezone).Format("2006-01-02")
 	for _, x := range rows {
+		normalizeSessionLedger(&x)
+		gamingCollected, snackCollected := collectedChargeAllocation(x)
+		out.TotalBillsGenerated++
+		out.TotalRevenueCollected += x.AmountPaid
+		out.GamingRevenueCollected += gamingCollected
+		out.SnackRevenueCollected += snackCollected
+		out.TotalPendingPayments += x.AmountDue
+		out.SnackSales += x.SnackAmount
+		out.CashCollected += x.CashPaid
+		out.OnlineCollected += x.OnlinePaid
+		switch x.PaymentStatus {
+		case "unpaid":
+			out.UnpaidSessions++
+		case "partial":
+			out.PartiallyPaidSessions++
+		case "paid":
+			out.PaidSessions++
+		}
 		if x.Status == "open" {
 			out.OpenSessions++
 		}
-		if x.PaymentAt != "" {
-			paidAt, err := sessionTimestamp(x.PaymentAt)
+		for _, payment := range x.PaymentHistory {
+			paidAt, err := sessionTimestamp(payment.Timestamp)
 			if err != nil {
 				out.ConfigurationStatus = fmt.Sprintf("invalid payment timestamp for session %s", x.ID)
 				return out
 			}
 			if paidAt.In(billingTimezone).Format("2006-01-02") == today {
-				out.TodayCollected += x.AmountPaid
+				out.TodayCollected += payment.Amount
 			}
 		}
 	}
@@ -1179,42 +1323,56 @@ func (s *BillingStore) update(id, action string, minutes, amount int) (Session, 
 			if x.Status != "open" {
 				return Session{}, errors.New("only open sessions can be extended")
 			}
+			if minutes < 1 || minutes > maxBilledDurationMinutes {
+				return Session{}, fmt.Errorf("extension duration must be between 1 and %d minutes", maxBilledDurationMinutes)
+			}
 			entry, e := lookupPrice(x.Category, x.Players, minutes)
 			if e != nil {
 				return Session{}, e
 			}
-			x.PurchasedMinutes += minutes
-			x.FinalAmount += entry.Amount
-			x.EstimatedAmount = x.FinalAmount
-			x.AmountPaid += entry.Amount
-			x.PaymentStatus = "paid"
-			x.PaymentAt = now
+			normalizeSessionLedger(&x)
+			previousMinutes, previousBill := x.PurchasedMinutes+x.AdditionalMinutes, x.FinalAmount
+			x.AdditionalMinutes += minutes
+			x.AdditionalAmount += entry.Amount
+			x.GamingAmount += entry.Amount
+			x.EstimatedAmount = x.GamingAmount
+			normalizeSessionLedger(&x)
+			extensionID, idErr := newLedgerID("EXT-")
+			if idErr != nil {
+				return Session{}, idErr
+			}
+			x.Extensions = append(x.Extensions, ExtensionTransaction{
+				ID: extensionID, SessionID: x.ID, Timestamp: now, PCID: x.PCID, PCName: x.PCName,
+				CustomerName: x.CustomerName, PreviousDurationMinutes: previousMinutes, AddedMinutes: minutes,
+				UpdatedDurationMinutes: previousMinutes + minutes, PreviousBill: previousBill, Amount: entry.Amount,
+				UpdatedBill: x.FinalAmount,
+			})
 			x.payments = append(x.payments, paymentRecord{
 				ID:        "P-" + time.Now().UTC().Format("20060102150405.000000000"),
-				Timestamp: now, Amount: entry.Amount, Status: "paid",
+				Timestamp: now, Status: "extension", ExtensionMinutes: minutes, ExtensionAmount: entry.Amount,
 			})
 			start, e := sessionTimestamp(x.StartedAt)
 			if e == nil {
 				x.ExpectedEndAt = start.Add(time.Duration(x.PurchasedMinutes+x.AdditionalMinutes) * time.Minute).Format(time.RFC3339Nano)
 			}
 		case "pay":
+			normalizeSessionLedger(&x)
 			if amount <= 0 {
-				amount = x.FinalAmount - x.AmountPaid
+				amount = x.AmountDue
 			}
-			if amount <= 0 {
+			if amount <= 0 || amount > x.AmountDue {
 				return Session{}, errors.New("no amount is due")
 			}
-			x.AmountPaid += amount
-			x.PaymentAt = now
-			if x.AmountPaid >= x.FinalAmount {
-				x.PaymentStatus = "paid"
-			} else {
-				x.PaymentStatus = "partial"
+			paymentID, idErr := newLedgerID("PAY-")
+			if idErr != nil {
+				return Session{}, idErr
 			}
+			x.PaymentHistory = append(x.PaymentHistory, PaymentTransaction{ID: paymentID, SessionID: x.ID, Timestamp: now, Amount: amount, Method: "cash", PCID: x.PCID, PCName: x.PCName, CustomerName: x.CustomerName})
+			x.PaymentAt = now
 			x.payments = append(x.payments, paymentRecord{
-				ID:        "P-" + time.Now().UTC().Format("20060102150405.000000000"),
-				Timestamp: now, Amount: amount, Status: x.PaymentStatus,
+				ID: paymentID, Timestamp: now, Amount: amount, Method: "cash", Status: "payment",
 			})
+			normalizeSessionLedger(&x)
 		case "close":
 			if x.Status != "open" {
 				return Session{}, apiError(http.StatusConflict, errors.New("session is already closed"))
@@ -1233,6 +1391,7 @@ func (s *BillingStore) update(id, action string, minutes, amount int) (Session, 
 		default:
 			return Session{}, errors.New("unknown session action")
 		}
+		normalizeSessionLedger(&x)
 		x.UpdatedAt = now
 		x.SyncedUpdatedAt = ""
 		if err := writeSessionRow(f, "Sessions", stored.Row, x, true); err != nil {
@@ -1277,6 +1436,15 @@ func (s *BillingStore) extendSessionRecord(id, pcID, pcAddress string, minutes, 
 	if err := s.require(); err != nil {
 		return Session{}, err
 	}
+	if minutes < 1 || minutes > maxBilledDurationMinutes {
+		return Session{}, fmt.Errorf("extension duration must be between 1 and %d minutes", maxBilledDurationMinutes)
+	}
+	if amount < minimumSessionCharge || amount > 9999999 {
+		return Session{}, fmt.Errorf("extension amount must be between ₹%d and ₹9999999", minimumSessionCharge)
+	}
+	if strings.TrimSpace(requestID) == "" || len(requestID) > 200 {
+		return Session{}, errors.New("extension request ID is required and must be at most 200 characters")
+	}
 	f, err := s.openLocked()
 	if err != nil {
 		return Session{}, err
@@ -1301,32 +1469,48 @@ func (s *BillingStore) extendSessionRecord(id, pcID, pcAddress string, minutes, 
 		if x.Status != "open" {
 			return Session{}, errors.New("only open sessions can be extended")
 		}
+		normalizeSessionLedger(&x)
 		for _, payment := range x.payments {
 			if payment.ID != requestKey {
 				continue
 			}
-			if payment.ExtensionMinutes != minutes {
-				return Session{}, errors.New("extension request ID was already used with a different duration")
+			if payment.ExtensionMinutes != minutes || (amount > 0 && payment.ExtensionAmount > 0 && payment.ExtensionAmount != amount) {
+				return Session{}, errors.New("extension request ID was already used with different billing values")
+			}
+			return x, nil
+		}
+		for _, extension := range x.Extensions {
+			if extension.RequestID != requestID {
+				continue
+			}
+			if extension.AddedMinutes != minutes || extension.Amount != amount {
+				return Session{}, errors.New("extension request ID was already used with different billing values")
 			}
 			return x, nil
 		}
 
 		now := time.Now().In(billingTimezone).Format(time.RFC3339Nano)
-		x.PurchasedMinutes += minutes
-		x.FinalAmount += amount
-		x.EstimatedAmount = x.FinalAmount
-		x.AmountPaid += amount
-		if x.AmountPaid >= x.FinalAmount {
-			x.PaymentStatus = "paid"
-		} else {
-			x.PaymentStatus = "partial"
+		previousMinutes, previousBill := x.PurchasedMinutes+x.AdditionalMinutes, x.FinalAmount
+		x.AdditionalMinutes += minutes
+		x.AdditionalAmount += amount
+		x.GamingAmount += amount
+		x.EstimatedAmount = x.GamingAmount
+		normalizeSessionLedger(&x)
+		extensionID, err := newLedgerID("EXT-")
+		if err != nil {
+			return Session{}, err
 		}
-		x.PaymentAt = now
+		x.Extensions = append(x.Extensions, ExtensionTransaction{
+			ID: extensionID, SessionID: x.ID, Timestamp: now, PCID: x.PCID, PCName: x.PCName,
+			CustomerName: x.CustomerName, PreviousDurationMinutes: previousMinutes, AddedMinutes: minutes,
+			UpdatedDurationMinutes: previousMinutes + minutes, PreviousBill: previousBill, Amount: amount,
+			UpdatedBill: x.FinalAmount, RequestID: requestID,
+		})
 		x.UpdatedAt = now
 		x.SyncedUpdatedAt = ""
 		x.payments = append(x.payments, paymentRecord{
-			ID: requestKey, Timestamp: now, Amount: amount, Status: x.PaymentStatus,
-			ExtensionMinutes: minutes, RemainingSeconds: remaining,
+			ID: requestKey, Timestamp: now, Status: "extension",
+			ExtensionMinutes: minutes, ExtensionAmount: amount, RemainingSeconds: remaining,
 		})
 		started, err := sessionTimestamp(x.StartedAt)
 		if err != nil {
@@ -1403,6 +1587,7 @@ type ExtendSessionRequest struct {
 	PCAddress  string `json:"pc_address,omitempty"`
 	Minutes    int    `json:"minutes,omitempty"`
 	Seconds    int    `json:"seconds,omitempty"`
+	Amount     *int   `json:"amount,omitempty"`
 	RequestID  string `json:"request_id,omitempty"`
 	TweakTimer *bool  `json:"tweak_timer,omitempty"`
 }
@@ -1475,8 +1660,9 @@ func extendSessionForSystem(req ExtendSessionRequest, tweakRemoteTimer bool) (Ex
 	}
 
 	minutes := req.Minutes
+	requestedAmount := 0
 	if req.Seconds != 0 {
-		if minutes != 0 {
+		if minutes != 0 || req.Amount != nil {
 			return ExtendSessionResponse{}, errors.New("specify either minutes or seconds, not both")
 		}
 		if req.Seconds <= 0 || req.Seconds%60 != 0 {
@@ -1484,12 +1670,32 @@ func extendSessionForSystem(req ExtendSessionRequest, tweakRemoteTimer bool) (Ex
 		}
 		minutes = req.Seconds / 60
 	}
-	if minutes <= 0 {
+	if req.Amount != nil {
+		if minutes != 0 {
+			return ExtendSessionResponse{}, errors.New("specify either extension minutes or extension amount, not both")
+		}
+		if *req.Amount < minimumSessionCharge || *req.Amount > 9999999 {
+			return ExtendSessionResponse{}, fmt.Errorf("extension amount must be between ₹%d and ₹9999999", minimumSessionCharge)
+		}
+		requestedAmount = *req.Amount
+		quote, quoteErr := durationForAmount(activeSession.Category, activeSession.Players, requestedAmount)
+		if quoteErr != nil {
+			return ExtendSessionResponse{}, quoteErr
+		}
+		minutes = quote.DurationMinutes
+	} else if minutes <= 0 {
 		return ExtendSessionResponse{}, errors.New("extension duration must be greater than zero")
+	}
+	if minutes > maxBilledDurationMinutes {
+		return ExtendSessionResponse{}, fmt.Errorf("extension duration must be at most %d minutes", maxBilledDurationMinutes)
 	}
 	entry, err := lookupPrice(activeSession.Category, activeSession.Players, minutes)
 	if err != nil {
 		return ExtendSessionResponse{}, fmt.Errorf("pricing rule lookup failed: %w", err)
+	}
+	amount := entry.Amount
+	if requestedAmount > 0 {
+		amount = requestedAmount
 	}
 
 	requestKey := extensionPaymentID(req.RequestID)
@@ -1497,8 +1703,8 @@ func extendSessionForSystem(req ExtendSessionRequest, tweakRemoteTimer bool) (Ex
 		if payment.ID != requestKey {
 			continue
 		}
-		if payment.ExtensionMinutes != minutes {
-			return ExtendSessionResponse{}, errors.New("extension request ID was already used with a different duration")
+		if payment.ExtensionMinutes != minutes || (payment.ExtensionAmount > 0 && payment.ExtensionAmount != amount) {
+			return ExtendSessionResponse{}, errors.New("extension request ID was already used with different billing values")
 		}
 		remaining := payment.RemainingSeconds
 		if tweakRemoteTimer {
@@ -1520,7 +1726,7 @@ func extendSessionForSystem(req ExtendSessionRequest, tweakRemoteTimer bool) (Ex
 		remainingSeconds = rem
 	}
 
-	updated, err := billingStore.extendSessionRecord(activeSession.ID, activeSession.PCID, activeSession.PCAddress, minutes, entry.Amount, remainingSeconds, req.RequestID)
+	updated, err := billingStore.extendSessionRecord(activeSession.ID, activeSession.PCID, activeSession.PCAddress, minutes, amount, remainingSeconds, req.RequestID)
 	if err != nil {
 		if tweakRemoteTimer && targetAddress != "" {
 			if _, rollbackErr := timerActionWithRemaining(targetAddress, "tweak", -minutes*60); rollbackErr != nil {
@@ -2090,16 +2296,21 @@ func localSessionHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	parts := strings.Split(strings.Trim(strings.TrimPrefix(r.URL.Path, "/internal/api/local/sessions/"), "/"), "/")
-	if len(parts) != 2 || r.Method != http.MethodPost {
+	if (len(parts) != 2 && len(parts) != 3) || r.Method != http.MethodPost {
 		http.NotFound(w, r)
 		return
 	}
 	var body struct {
-		PCID      string `json:"pc_id"`
-		PCAddress string `json:"pc_address"`
-		DeviceID  string `json:"device_id"`
-		Minutes   int    `json:"minutes"`
-		Amount    int    `json:"amount"`
+		PCID          string `json:"pc_id"`
+		PCAddress     string `json:"pc_address"`
+		DeviceID      string `json:"device_id"`
+		Minutes       int    `json:"minutes"`
+		Amount        int    `json:"amount"`
+		Method        string `json:"method"`
+		RequestID     string `json:"request_id"`
+		ItemID        string `json:"item_id"`
+		Quantity      int    `json:"quantity"`
+		QuantityDelta int    `json:"quantity_delta"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid session update"})
@@ -2117,7 +2328,24 @@ func localSessionHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var session Session
-	if parts[1] == "close" {
+	if parts[1] == "pay" {
+		if body.RequestID == "" {
+			body.RequestID = fmt.Sprintf("legacy-pay-%s-%d-%s", parts[0], body.Amount, body.Method)
+		}
+		session, err = billingStore.addPayment(parts[0], PaymentRequest{Amount: body.Amount, Method: body.Method, RequestID: body.RequestID})
+	} else if parts[1] == "snacks" && len(parts) == 2 {
+		if body.RequestID == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "request_id is required"})
+			return
+		}
+		session, err = billingStore.addSnackOrder(parts[0], SnackOrderRequest{PCID: body.PCID, PCAddress: body.PCAddress, DeviceID: body.DeviceID, ItemID: body.ItemID, Quantity: body.Quantity, RequestID: body.RequestID})
+	} else if parts[1] == "snacks" && len(parts) == 3 && parts[2] == "adjust" {
+		if body.RequestID == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "request_id is required"})
+			return
+		}
+		session, err = billingStore.adjustSnackOrder(parts[0], SnackAdjustmentRequest{ItemID: body.ItemID, QuantityDelta: body.QuantityDelta, RequestID: body.RequestID})
+	} else if parts[1] == "close" {
 		pc, ok := store.find(current.PCID)
 		if !ok || normalizeSessionAddress(pc.Address) != normalizeSessionAddress(current.PCAddress) {
 			writeJSON(w, http.StatusConflict, map[string]string{"error": "session endpoint is not owned by this billing device"})
@@ -2177,6 +2405,7 @@ func internalExtensionHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func registerBillingHandlers(mux *http.ServeMux) {
+	mux.HandleFunc("/api/pricing/quote", pricingQuoteHandler)
 	mux.HandleFunc("/api/pricing", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "GET required", 405)
@@ -2188,15 +2417,53 @@ func registerBillingHandlers(mux *http.ServeMux) {
 	mux.HandleFunc("/api/billing/download", downloadBilling)
 	mux.HandleFunc("/api/billing/sync", billingSyncHandler)
 	mux.HandleFunc("/api/billing/report", billingReportHandler)
+	mux.HandleFunc("/api/snacks/menu", menuHandler)
 	mux.HandleFunc("/internal/api/billing/sync/pending", billingSyncPendingHandler)
 	mux.HandleFunc("/internal/api/billing/sync/ack", billingSyncAckHandler)
 	mux.HandleFunc("/internal/api/local/sessions", localSessionHandler)
 	mux.HandleFunc("/internal/api/local/sessions/", localSessionHandler)
+	mux.HandleFunc("/internal/api/snacks/menu/sync", localMenuSyncHandler)
 	mux.HandleFunc("/api/sessions/extend", extendSessionHandler)
 	mux.HandleFunc("/internal/api/sessions/extend", internalExtensionHandler)
 	mux.HandleFunc("/api/sessions", sessionsHandler)
 	mux.HandleFunc("/api/sessions/", sessionActionHandler)
 }
+
+func pricingQuoteHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "GET required"})
+		return
+	}
+	query := r.URL.Query()
+	category := strings.TrimSpace(query.Get("category"))
+	players, err := strconv.Atoi(query.Get("players"))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "players must be a whole number"})
+		return
+	}
+	var quote PricingQuote
+	if rawAmount := strings.TrimSpace(query.Get("amount")); rawAmount != "" {
+		amount, parseErr := strconv.Atoi(rawAmount)
+		if parseErr != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "amount must be a whole number of INR"})
+			return
+		}
+		quote, err = durationForAmount(category, players, amount)
+	} else {
+		minutes, parseErr := strconv.Atoi(query.Get("duration_minutes"))
+		if parseErr != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "duration_minutes must be a whole number"})
+			return
+		}
+		quote, err = quoteForDuration(category, players, minutes)
+	}
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, quote)
+}
+
 func sessionsHandler(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -2233,19 +2500,53 @@ func sessionActionHandler(w http.ResponseWriter, r *http.Request) {
 		extendSessionHandler(w, r)
 		return
 	}
-	if len(parts) != 2 || r.Method != http.MethodPost {
+	if (len(parts) != 2 && len(parts) != 3) || r.Method != http.MethodPost {
 		http.NotFound(w, r)
 		return
 	}
 	var body struct {
-		Minutes int `json:"minutes"`
-		Amount  int `json:"amount"`
+		Minutes       int    `json:"minutes"`
+		Amount        int    `json:"amount"`
+		Method        string `json:"method"`
+		RequestID     string `json:"request_id"`
+		ItemID        string `json:"item_id"`
+		Quantity      int    `json:"quantity"`
+		QuantityDelta int    `json:"quantity_delta"`
 	}
 	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body) != nil {
 		writeJSON(w, 400, map[string]string{"error": "invalid session update"})
 		return
 	}
-	x, err := updateSessionForDashboardContext(r.Context(), parts[0], parts[1], body.Minutes, body.Amount)
+	var x Session
+	var err error
+	action := parts[1]
+	if len(parts) == 3 && parts[1] == "snacks" && parts[2] == "adjust" {
+		action = "snacks/adjust"
+	} else if len(parts) != 2 {
+		http.NotFound(w, r)
+		return
+	}
+	switch action {
+	case "pay":
+		if body.RequestID == "" {
+			body.RequestID = fmt.Sprintf("legacy-pay-%s-%d-%s", parts[0], body.Amount, body.Method)
+		}
+		x, err = recordPaymentForDashboardContext(r.Context(), parts[0], PaymentRequest{Amount: body.Amount, Method: body.Method, RequestID: body.RequestID})
+	case "snacks":
+		if body.RequestID == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "request_id is required"})
+			return
+		}
+		x, err = addSnackForDashboardContext(r.Context(), parts[0], SnackOrderRequest{ItemID: body.ItemID, Quantity: body.Quantity, RequestID: body.RequestID})
+	case "snacks/adjust":
+		if body.RequestID == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "request_id is required"})
+			return
+		}
+		x, err = adjustSnackForDashboardContext(r.Context(), parts[0], SnackAdjustmentRequest{ItemID: body.ItemID, QuantityDelta: body.QuantityDelta, RequestID: body.RequestID})
+	default:
+		x, err = updateSessionForDashboardContext(r.Context(), parts[0], action, body.Minutes, body.Amount)
+	}
 	if err != nil {
 		writeBillingError(w, err)
 		return

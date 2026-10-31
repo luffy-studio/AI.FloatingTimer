@@ -1383,6 +1383,7 @@
       const pendingSessionStarts = new Set();
       let billingCatalog = { currency: "INR", entries: [] };
       let activeBillingSessions = [];
+      let snackMenu = [];
       let lastReportDevices = [];
       let requestSequence = 0;
       const requestHistory = [];
@@ -1481,6 +1482,11 @@
           $("reportBilled").textContent = money(report.billed_amount);
           $("reportRevenue").textContent = money(report.collected_amount ?? report.revenue);
           $("reportOutstanding").textContent = money(report.outstanding);
+          ensureReportCollectionMetrics();
+          $("reportGamingCollected").textContent = money(report.gaming_revenue_collected);
+          $("reportSnackCollected").textContent = money(report.snack_revenue_collected);
+          $("reportCashCollected").textContent = money(report.cash_collected);
+          $("reportOnlineCollected").textContent = money(report.online_collected);
           $("billingReportPCs").innerHTML = systems.map(item =>
             `<tr><td>${esc(item.pc_name)}${item.device_id ? ` <small class="hint">${esc(item.device_id)}</small>` : ""}</td><td>${Number(item.session_count ?? item.customer_count) || 0}</td><td>${money(item.billed_amount)}</td><td>${money(item.collected_amount ?? item.revenue)}</td><td>${money(item.outstanding)}</td></tr>`
           ).join("") || "<tr><td colspan='5'>No session records for this date.</td></tr>";
@@ -1490,7 +1496,7 @@
             return `<tr><td>${esc(item.name || item.device_id)}</td><td>${esc(state)}</td><td>${pending}</td><td>${esc(item.last_successful_sync_at || "Never")}</td><td>${esc(item.error || "")}</td></tr>`;
           }).join("") || "<tr><td colspan='5'>No device synchronization status yet. Use Sync PCs to check registered systems.</td></tr>";
           $("billingReportRecords").innerHTML = records.map(item =>
-            `<tr><td>${esc(item.customer_name)}</td><td>${esc(item.pc_name)} <small class="hint">${esc(item.pc_id)}</small></td><td>${Number(item.players) || 0}</td><td>${esc(report.date)}</td><td>${esc(item.started_at)}</td><td>${esc(item.ended_at || (item.expected_end_at ? "Open — expected " + item.expected_end_at : "Open"))}</td><td>${Number(item.purchased_minutes) || 0} min</td><td>${Number(item.additional_minutes) || 0} min</td><td>${money(item.final_amount)}</td><td>${money(item.amount_paid)}</td><td>${money(Math.max(0, Number(item.final_amount) - Number(item.amount_paid)))}</td><td>${esc(item.payment_status)}</td></tr>`
+            `<tr><td>${esc(item.customer_name)}</td><td>${esc(item.pc_name)} <small class="hint">${esc(item.pc_id)}</small></td><td>${Number(item.players) || 0}</td><td>${esc(report.date)}</td><td>${esc(item.started_at)}</td><td>${esc(item.ended_at || (item.expected_end_at ? "Open — expected " + item.expected_end_at : "Open"))}</td><td>${Number(item.purchased_minutes) || 0} min</td><td>${Number(item.additional_minutes) || 0} min</td><td>${money(item.final_amount)}</td><td>${money(item.amount_paid)}</td><td>${money(Number(item.amount_due ?? Math.max(0, Number(item.final_amount) - Number(item.amount_paid))))}</td><td>${esc(item.payment_status)}</td></tr>`
           ).join("") || "<tr><td colspan='12'>No session records for this date.</td></tr>";
           const status = $("billingReportStatus");
           if (report.complete) {
@@ -1525,6 +1531,22 @@
         }
       }
 
+      function snackOrderTotal(session) {
+        return (Array.isArray(session?.snack_orders) ? session.snack_orders : [])
+          .reduce((sum, order) => sum + (Number(order.total_amount) || 0), 0);
+      }
+
+      function renderSnackOrders(session) {
+        const orders = Array.isArray(session.snack_orders) ? session.snack_orders : [];
+        if (!orders.length) return '<div class="hint">No snacks added.</div>';
+        return orders.map(order => `<div class="billing-line"><span>${esc(order.item_name)} × ${Number(order.quantity) || 0} <small>(${money(order.unit_price)} each)</small></span><b>${money(order.total_amount)} <button type="button" class="billing-action" onclick="adjustSessionSnack(${argument(session.id)},${argument(order.item_id)},1)">+</button><button type="button" class="billing-action" onclick="adjustSessionSnack(${argument(session.id)},${argument(order.item_id)},-1)">−</button></b></div>`).join("");
+      }
+
+      function snackOptions() {
+        return snackMenu.filter(item => item.available && Number(item.unit_price) > 0).map(item =>
+          `<option value="${esc(item.id)}">${esc(item.name)} · ${money(item.unit_price)}</option>`).join("");
+      }
+
       function renderBillingSessions(sessions) {
         for (const p of activePCs()) {
           const element = $("bill-" + p.id);
@@ -1540,25 +1562,116 @@
             details.innerHTML = "";
             continue;
           }
-          const duration = Number(session.purchased_minutes) + Number(session.additional_minutes);
+          const purchasedMinutes = Number(session.purchased_minutes) || 0;
+          const additionalMinutes = Number(session.additional_minutes) || 0;
+          const purchasedAmount = Number(session.purchased_amount) || 0;
+          const additionalAmount = Number(session.additional_amount) || 0;
+          const duration = purchasedMinutes + additionalMinutes;
           const due = Math.max(0, Number(session.final_amount) - Number(session.amount_paid));
           element.textContent = `${session.customer_name} · ${session.category} · ${duration} min · ${money(session.final_amount)}`;
           details.innerHTML = [
             ["Customer", session.customer_name || "—"],
             ["Category", `${session.category} · ${session.players} player(s)`],
             ["Started", session.started_at || "—"],
-            ["Duration", `${duration} min`],
+            ["Purchased time", `${purchasedMinutes} min`],
+            ["Additional time", `${additionalMinutes} min`],
+            ["Purchased amount", money(purchasedAmount)],
+            ["Additional amount", money(additionalAmount)],
+            ["Total time", `${duration} min`],
+            ["Gaming bill", money((Number(session.gaming_amount) || purchasedAmount + additionalAmount))],
+            ["Snack bill", money(Number(session.snack_amount) || snackOrderTotal(session))],
             ["Current bill", money(session.final_amount)],
+            ["Paid", money(session.amount_paid)],
             ["Amount due", money(due)],
             ["Payment", session.payment_status || "unpaid"],
           ].map(([label, value]) =>
             `<div class="billing-line"><span>${esc(label)}</span><b class="${label === "Payment" ? "pay " + (value === "paid" ? "paid" : "pending") : ""}">${esc(value)}</b></div>`
-          ).join("") + `<div class="row" style="margin-top:8px">
-            <button class="billing-action" ${due === 0 ? "disabled" : ""} onclick="sessionAction(${argument(session.id)}, 'pay')">Mark Paid</button>
+          ).join("") + `<div style="margin-top:8px"><h3 style="margin:8px 0 4px">Snacks</h3>${renderSnackOrders(session)}<div class="row" style="margin-top:6px"><select id="snack-item-${esc(p.id)}"><option value="">Select item</option>${snackOptions()}</select><input id="snack-qty-${esc(p.id)}" type="number" min="1" max="1000" value="1" style="width:60px"><button class="billing-action" onclick="addSessionSnack(${argument(session.id)},${argument(p.id)})">+ Snacks</button></div></div>
+          <div class="row" style="margin-top:8px">
+            <input id="billing-pay-amount-${esc(p.id)}" type="number" min="1" step="1" placeholder="Amount" style="width:90px" ${due === 0 ? "disabled" : ""}>
+            <select id="billing-pay-method-${esc(p.id)}" ${due === 0 ? "disabled" : ""}><option value="cash">Cash</option><option value="online">Online</option></select>
+            <button class="billing-action" ${due === 0 ? "disabled" : ""} onclick="recordSessionPayment(${argument(session.id)},${argument(p.id)})">Record Payment</button>
+            <button class="billing-action" ${due === 0 ? "disabled" : ""} onclick="recordSessionPayment(${argument(session.id)},${argument(p.id)},true)">Mark Paid</button>
             <button class="primary billing-action" onclick="sessionAction(${argument(session.id)}, 'close')">Close Session</button>
+          </div>
+          <div class="billing-extension" style="margin-top:8px">
+            <input id="billing-minutes-${esc(p.id)}" type="number" min="1" step="1" placeholder="Minutes">
+            <input id="billing-amount-${esc(p.id)}" type="number" min="15" step="1" placeholder="₹ Amount">
+            <button class="billing-action" onclick="extendCustomBillingSession(${argument(p.id)})">Extend</button>
           </div>`;
         }
       }
+
+      async function recordSessionPayment(id, pcId, settle = false) {
+        const amountInput = $("billing-pay-amount-" + pcId);
+        const methodInput = $("billing-pay-method-" + pcId);
+        const amount = settle ? 0 : Number(amountInput?.value || 0);
+        if (!settle && (!Number.isSafeInteger(amount) || amount <= 0)) { alert("Enter a positive payment amount."); return; }
+        try {
+          await request("/api/sessions/" + encodeURIComponent(id) + "/pay", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ amount, method: methodInput?.value || "cash", request_id: requestID() }),
+          }, { deviceId: pcId, feature: "session-payment" });
+          if (amountInput) amountInput.value = "";
+          await loadBilling();
+        } catch (e) { alert(e.message); }
+      }
+
+      async function addSessionSnack(sessionID, pcId) {
+        const item = $("snack-item-" + pcId)?.value;
+        const quantity = Number($("snack-qty-" + pcId)?.value || 0);
+        if (!item || !Number.isSafeInteger(quantity) || quantity < 1) { alert("Select a snack and enter a valid quantity."); return; }
+        try {
+          await request("/api/sessions/" + encodeURIComponent(sessionID) + "/snacks", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ item_id: item, quantity, request_id: requestID() }),
+          }, { deviceId: pcId, feature: "session-snack" });
+          await loadBilling();
+        } catch (e) { alert(e.message); }
+      }
+
+      async function adjustSessionSnack(sessionID, itemID, delta) {
+        try {
+          await request("/api/sessions/" + encodeURIComponent(sessionID) + "/snacks/adjust", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ item_id: itemID, quantity_delta: delta, request_id: requestID() }),
+          }, { feature: "session-snack" });
+          await loadBilling();
+        } catch (e) { alert(e.message); }
+      }
+
+      function ensureSnackMenuPanel() {
+        const dashboard = $("dashboard");
+        if (!dashboard || $("snackMenuConfig")) return;
+        const section = document.createElement("section");
+        section.id = "snackMenuConfig"; section.className = "panel"; section.style.marginTop = "16px";
+        section.innerHTML = `<div class="top"><div><h2>Snacks &amp; beverages</h2><div class="hint">Configure available menu items here; prices are captured on each order.</div></div></div><div class="row" style="margin:8px 0"><input id="snack-name" placeholder="Item name"><select id="snack-category"><option>Snacks</option><option>Cold Drinks</option><option>Water</option><option>Packaged Food</option><option>Other</option></select><input id="snack-price" type="number" min="0" step="1" placeholder="₹ Price"><label class="row"><input id="snack-available" type="checkbox" checked> Available</label><button class="primary" onclick="saveSnackMenuItem()">Add item</button></div><div class="table-wrap"><table><thead><tr><th>Item</th><th>Category</th><th>Price</th><th>Availability</th><th></th></tr></thead><tbody id="snackMenuRows"></tbody></table></div>`;
+        dashboard.appendChild(section);
+      }
+
+      function renderSnackMenu() {
+        ensureSnackMenuPanel();
+        const rows = $("snackMenuRows"); if (!rows) return;
+        rows.innerHTML = snackMenu.map(item => `<tr><td>${esc(item.name)}</td><td>${esc(item.category)}</td><td>${money(item.unit_price)}</td><td>${item.available ? "Available" : "Out of stock"}</td><td><button onclick="editSnackMenuItem(${argument(item.id)})">Edit</button> <button onclick="deleteSnackMenuItem(${argument(item.id)})">Remove</button></td></tr>`).join("") || `<tr><td colspan="5" class="hint">No menu items configured.</td></tr>`;
+      }
+
+      async function loadSnackMenu() {
+        try { const menu = await request("/api/snacks/menu", {}, { feature: "snack-menu" }); snackMenu = Array.isArray(menu) ? menu : []; renderSnackMenu(); renderBillingSessions(activeBillingSessions); }
+        catch (e) { console.warn("Could not load snack menu", e); }
+      }
+
+      async function saveSnackMenuItem(existing = null) {
+        const item = existing || {};
+        const name = existing ? prompt("Item name", existing.name) : $("snack-name")?.value;
+        const category = existing ? prompt("Category: Snacks, Cold Drinks, Water, Packaged Food, or Other", existing.category) : $("snack-category")?.value;
+        const price = existing ? Number(prompt("Unit price in ₹", existing.unit_price)) : Number($("snack-price")?.value || 0);
+        const available = existing ? confirm("Available for ordering? Cancel means out of stock.") : !!$("snack-available")?.checked;
+        if (!name || !category || !Number.isSafeInteger(price) || price < 0) return;
+        try { await request("/api/snacks/menu", { method: existing ? "PUT" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...item, name, category, unit_price: price, available }) }, { feature: "snack-menu" }); await loadSnackMenu(); if (!existing) { $("snack-name").value = ""; $("snack-price").value = ""; } }
+        catch (e) { alert(e.message); }
+      }
+      function editSnackMenuItem(id) { const item = snackMenu.find(x => x.id === id); if (item) saveSnackMenuItem(item); }
+      async function deleteSnackMenuItem(id) { if (!confirm("Remove this menu item? Historical orders are retained.")) return; try { await request("/api/snacks/menu?id=" + encodeURIComponent(id), { method: "DELETE" }, { feature: "snack-menu" }); await loadSnackMenu(); } catch (e) { alert(e.message); } }
 
       function renderPriceList() {
         const priceList = $("priceList");
@@ -1584,7 +1697,7 @@
           activeBillingSessions = Array.isArray(sessions) ? sessions : [];
           if (previousCatalog !== JSON.stringify(billingCatalog.entries)) renderDashboard();
           renderBillingSessions(activeBillingSessions);
-          renderPriceList(); await Promise.all([loadHistory(), loadBillingReport()]);
+          renderPriceList(); renderSnackMenu(); await Promise.all([loadSnackMenu(), loadHistory(), loadBillingReport()]);
           const summary = await request("/api/billing/summary"); $("metricRevenue").textContent = summary.enabled ? money(summary.today_collected) : "--";
           $("billingStatus").hidden = !!summary.enabled; $("billingStatus").textContent = summary.configuration_status || "Billing is disabled on this machine.";
         } catch (e) { $("billingStatus").hidden=false; $("billingStatus").textContent="Billing unavailable: "+e.message; }
@@ -1599,28 +1712,48 @@
           const rows = await request("/api/sessions?" + query.toString());
           $("historyRows").innerHTML = (Array.isArray(rows) ? rows : []).map(x => {
             const payButton = x.final_amount > x.amount_paid
-              ? `<button onclick="sessionAction(${argument(x.id)},'pay',${argument(x.pc_id)})">Paid</button> `
+              ? `<button onclick="collectHistoryPayment(${argument(x.id)},${argument(x.pc_id)})">Payment</button> `
               : "";
-            return `<tr><td>${esc(x.id)}</td><td>${esc(x.pc_name)}</td><td>${esc(x.customer_name)}</td><td>${x.players}</td><td>${esc(x.started_at)}</td><td>${esc(x.ended_at || x.expected_end_at)}</td><td>${Number(x.purchased_minutes) + Number(x.additional_minutes)} min</td><td>${money(x.final_amount)}</td><td>${esc(x.payment_status)}</td><td>${payButton}<button onclick="sessionAction(${argument(x.id)},'close',${argument(x.pc_id)})">Close</button></td></tr>`;
+            return `<tr><td>${esc(x.id)}</td><td>${esc(x.pc_name)}</td><td>${esc(x.customer_name)}</td><td>${x.players}</td><td>${esc(x.started_at)}</td><td>${esc(x.ended_at || x.expected_end_at)}</td><td>${Number(x.purchased_minutes) || 0} + ${Number(x.additional_minutes) || 0} min</td><td>${money(x.final_amount)}<br><small class="hint">Gaming ${money(x.gaming_amount)} · Snacks ${money(x.snack_amount)}</small></td><td>${esc(x.payment_status)}<br><small class="hint">Due ${money(x.amount_due)}</small></td><td>${payButton}</td></tr>`;
           }).join("") || "<tr><td colspan='10'>No billing sessions recorded.</td></tr>";
         } catch(e) {
           $("historyRows").innerHTML = `<tr><td colspan='10'>${esc(e.message)}</td></tr>`;
         }
       }
 
+      async function collectHistoryPayment(id, deviceId) {
+        const amount = Number(prompt("Payment amount in ₹ (blank pays the full outstanding balance)", ""));
+        const method = (prompt("Payment method: Cash or Online", "Cash") || "Cash").toLowerCase();
+        const payload = { amount: Number.isSafeInteger(amount) && amount > 0 ? amount : 0, method, request_id: requestID() };
+        try { await request("/api/sessions/" + encodeURIComponent(id) + "/pay", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }, { deviceId, feature: "session-payment" }); await loadBilling(); }
+        catch (e) { alert(e.message); }
+      }
       async function sessionAction(id, action, deviceId = "") { try { const session=activeBillingSessions.find(item=>item.id===id); await request("/api/sessions/"+encodeURIComponent(id)+"/"+action,{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"},{deviceId:deviceId||session?.pc_id||"",feature:"session-"+action}); await loadBilling(); } catch(e) { alert(e.message); } }
 
       function backupBilling() {
         alert("Backup is not connected yet. Add a backup endpoint to backupBilling() to enable it.");
       }
 
+      function assignedCategoryForPC(p) {
+        const name = String(p?.name || "").toLowerCase();
+        if (name.includes("ps5")) return "PS5";
+        if (name.includes("racing pro")) return "Racing Pro";
+        if (name.includes("racing lite") || name.includes("racing simulator")) return "Racing Lite";
+        const match = name.match(/\bpc\s*[-_ ]?([1-4])(?:\D|$)/);
+        if (match) return ["", "PC Pro", "PC Pro", "PC Lite", "PC Lite"][Number(match[1])];
+        return "";
+      }
+
       function sessionFormFor(id) {
+        const pc = pcs.find(item => item.id === id);
         const categories = [...new Set(billingCatalog.entries.map(entry => entry.category))];
         let state = sessionFormState.get(id);
         if (!state) {
-          state = { customer: "", category: "", players: 0, durationValue: "", durationUnit: "M", manualPrice: "" };
+          state = { customer: "", category: "", players: 0, durationValue: "", durationUnit: "M", manualPrice: "", priceEdited: false, quoteReady: false, quoteVersion: 0 };
           sessionFormState.set(id, state);
         }
+        const assigned = assignedCategoryForPC(pc);
+        if (assigned) state.category = assigned;
         if (!categories.includes(state.category)) state.category = categories[0] || "";
         const players = [...new Set(billingCatalog.entries
           .filter(entry => entry.category === state.category).map(entry => entry.players))];
@@ -1636,6 +1769,8 @@
         const price = billingCatalog.entries.find(entry =>
           entry.category === state.category && entry.players === Number(state.players) &&
           entry.duration_minutes === durationMinutes);
+        if (!state.manualPrice && price) state.manualPrice = String(price.amount);
+        if (price && !state.quoteReady) state.quoteReady = true;
         return { state, categories, players, durationMinutes, price };
       }
 
@@ -1656,10 +1791,8 @@
               value="${esc(state.customer)}" oninput="updateCardSessionForm(${argument(p.id)}, 'customer')">
           </div>
           <div class="session-field pricing">
-            <label for="sf-category-${id}">Pricing Group</label>
-            <select id="sf-category-${id}" onchange="updateCardSessionForm(${argument(p.id)}, 'category')">
-              ${options(categories, state.category, value => value)}
-            </select>
+            <label>Pricing Group</label>
+            <span id="sf-category-${id}" class="manual-input" data-category="${esc(state.category)}">${esc(state.category || "Assigned by PC")}</span>
           </div>
           <div class="session-field players">
             <label for="sf-players-${id}">Players</label>
@@ -1683,17 +1816,17 @@
             <span id="sf-duration-error-${id}" class="field-error" role="alert"></span>
           </div>
           <div class="manual-field price">
-            <label for="sf-price-${id}">Manual price</label>
+            <label for="sf-price-${id}">Session price</label>
             <div class="manual-price">
               <span class="currency-symbol" aria-hidden="true">₹</span>
-              <input id="sf-price-${id}" class="manual-input" type="number" min="0" step="0.01"
-                inputmode="decimal" placeholder="Optional" value="${esc(state.manualPrice)}"
+              <input id="sf-price-${id}" class="manual-input" type="number" min="15" step="1"
+                inputmode="numeric" placeholder="₹ Amount" value="${esc(state.manualPrice)}"
                 oninput="updateCardSessionForm(${argument(p.id)}, 'price')">
             </div>
             <span id="sf-price-error-${id}" class="field-error" role="alert"></span>
           </div>
-          <span class="manual-note">Manual price is not saved; billing uses the listed estimate.</span>
-          <button id="sf-start-${id}" type="button" class="btn-start-session" ${!price ? "disabled" : ""}
+          <span class="manual-note">Time and price are synchronized by the billing service. Custom durations use the published package rule.</span>
+          <button id="sf-start-${id}" type="button" class="btn-start-session" ${!price && !state.quoteReady ? "disabled" : ""}
             onclick="startPCBillingSession(${argument(p.id)})">Start Session</button>
           <div id="sf-message-${id}" class="pc-session-message" role="status"></div>
         </div>`;
@@ -1711,44 +1844,57 @@
         state.customer = customer.value;
         state.durationValue = duration.value;
         state.durationUnit = unit.value;
+        state.category = category.dataset.category || state.category;
+        state.players = Number(player.value);
         state.manualPrice = manualPrice.value;
+        if (changed === "price") state.priceEdited = true;
+        if (["duration", "unit", "players"].includes(changed)) state.priceEdited = false;
+        if (changed !== "customer") state.quoteReady = false;
+        if (changed !== "customer") state.quoteReady = false;
         duration.max = unit.value === "H" ? "24" : "1440";
-        if (changed === "category") {
-          state.category = category.value;
-          state.players = 0;
-        } else if (changed === "players") {
-          state.players = Number(player.value);
-        }
-        const data = sessionFormFor(id);
-        if (changed === "category") {
-          player.innerHTML = data.players.map(value =>
-            `<option value="${value}">${value} Player${value === 1 ? "" : "s"}</option>`
-          ).join("");
-          player.value = String(data.state.players);
-        }
-        data.state.category = category.value;
-        data.state.players = Number(player.value);
         const maxDuration = unit.value === "H" ? 24 : 1440;
         const validDuration = Number.isSafeInteger(Number(duration.value)) &&
           Number(duration.value) >= 1 && Number(duration.value) <= maxDuration &&
           ["M", "H"].includes(unit.value);
         const durationError = $("sf-duration-error-" + id);
-        if (durationError) durationError.textContent = validDuration && !data.price
-          ? "No listed price for this duration and group."
-          : validDuration ? "" : `Enter a whole duration from 1 to ${maxDuration} ${unit.value === "H" ? "hours" : "minutes"}.`;
-        const enteredPrice = manualPrice.value.trim();
-        const parsedPrice = enteredPrice === "" ? null : Number(enteredPrice);
-        const validPrice = parsedPrice === null ||
-          (Number.isFinite(parsedPrice) && parsedPrice >= 0 && parsedPrice <= 9999999.99);
+        if (durationError) durationError.textContent = validDuration ? "" : `Enter a whole duration from 1 to ${maxDuration} ${unit.value === "H" ? "hours" : "minutes"}.`;
+        const parsedPrice = Number(manualPrice.value);
+        const validPrice = Number.isSafeInteger(parsedPrice) && parsedPrice >= 15 && parsedPrice <= 9999999;
         const priceError = $("sf-price-error-" + id);
-        if (priceError) priceError.textContent = validPrice ? "" : "Enter a valid non-negative amount.";
-        $("sf-estimate-" + id).textContent = data.price ? rupees(data.price.amount) : "--";
-        $("sf-start-" + id).disabled = !data.price || !validDuration || !validPrice || pendingSessionStarts.has(id);
+        if (priceError) priceError.textContent = validPrice ? "" : "Enter a whole amount of at least ₹15.";
+        $("sf-estimate-" + id).textContent = validPrice ? rupees(parsedPrice) : "--";
+        $("sf-start-" + id).disabled = !state.quoteReady || !validDuration || !validPrice || pendingSessionStarts.has(id);
         const message = $("sf-message-" + id);
         if (message) message.textContent = "";
         customer.classList?.remove("field-invalid");
         duration.classList?.toggle("field-invalid", !validDuration);
         manualPrice.classList?.toggle("field-invalid", !validPrice);
+        if (changed === "customer") return;
+        if (!validDuration || !Number.isSafeInteger(state.players) || state.players < 1 || !state.category) return;
+        const version = ++state.quoteVersion;
+        const params = new URLSearchParams({ category: state.category, players: String(state.players) });
+        if (changed === "price") params.set("amount", String(parsedPrice));
+        else params.set("duration_minutes", String(Number(duration.value) * (unit.value === "H" ? 60 : 1)));
+        request("/api/pricing/quote?" + params.toString()).then(quote => {
+          if (version !== state.quoteVersion) return;
+          state.quoteReady = true;
+          state.manualPrice = String(quote.amount);
+          manualPrice.value = String(quote.amount);
+          if (changed === "price") {
+            const minutes = Number(quote.duration_minutes);
+            unit.value = minutes >= 60 && minutes % 60 === 0 ? "H" : "M";
+            duration.value = String(unit.value === "H" ? minutes / 60 : minutes);
+            state.durationValue = duration.value;
+            state.durationUnit = unit.value;
+          }
+          $("sf-estimate-" + id).textContent = rupees(quote.amount);
+          $("sf-start-" + id).disabled = pendingSessionStarts.has(id);
+        }).catch(error => {
+          if (version !== state.quoteVersion) return;
+          state.quoteReady = false;
+          if (durationError) durationError.textContent = error.message;
+          $("sf-start-" + id).disabled = true;
+        });
       }
 
       async function startPCBillingSession(id) {
@@ -1771,7 +1917,7 @@
           customerInput.focus();
           return;
         }
-        const category = $("sf-category-" + id).value;
+        const category = $("sf-category-" + id).dataset.category;
         const players = Number($("sf-players-" + id).value);
         const durationValue = Number($("sf-duration-" + id).value);
         const durationUnit = $("sf-unit-" + id).value;
@@ -1787,16 +1933,14 @@
         }
         const durationMinutes = durationValue * (durationUnit === "H" ? 60 : 1);
         const customPrice = manualPriceValue === "" ? null : Number(manualPriceValue);
-        if (customPrice !== null && (!Number.isFinite(customPrice) || customPrice < 0 || customPrice > 9999999.99)) {
-          priceError.textContent = "Enter a valid non-negative amount.";
+        if (customPrice === null || !Number.isSafeInteger(customPrice) || customPrice < 15 || customPrice > 9999999) {
+          priceError.textContent = "Enter a whole amount between ₹15 and ₹9999999.";
           $("sf-price-" + id).focus();
           return;
         }
-        const price = billingCatalog.entries.find(entry =>
-          entry.category === category && entry.players === players &&
-          entry.duration_minutes === durationMinutes);
-        if (!isActive(p) || !price || !Number.isSafeInteger(players) || players < 1) {
-          message.textContent = !isActive(p) ? "This PC is inactive." : "Select a valid player count and listed price.";
+        const state = sessionFormFor(id).state;
+        if (!isActive(p) || !state.quoteReady || !Number.isSafeInteger(players) || players < 1) {
+          message.textContent = !isActive(p) ? "This PC is inactive." : "Pricing is still being calculated.";
           return;
         }
         customerInput.classList.remove("field-invalid");
@@ -1814,17 +1958,18 @@
               customer_name: customer,
               players,
               duration_minutes: durationMinutes,
+              ...(state.priceEdited ? { manual_price: customPrice } : {}),
             }),
           }, { deviceId: id, feature: "session-start" });
           if (!session || typeof session.id !== "string" || !session.id.trim() ||
               session.status !== "open" || session.pc_id !== id || session.pc_address !== p.address ||
               session.customer_name !== customer || session.category !== category ||
-              Number(session.players) !== players || Number(session.purchased_minutes) !== durationMinutes) {
+              Number(session.players) !== players || Number(session.purchased_minutes) < 1) {
             throw new Error("The billing service returned an incomplete or mismatched session.");
           }
           sessionFormState.set(id, {
             customer: "", category, players, durationValue: String(durationValue),
-            durationUnit, manualPrice: "",
+            durationUnit, manualPrice: "", priceEdited: false, quoteReady: false, quoteVersion: 0,
           });
           customerInput.value = "";
           activeBillingSessions = activeBillingSessions.filter(item =>
@@ -1838,7 +1983,7 @@
         } finally {
           pendingSessionStarts.delete(id);
           button.removeAttribute("aria-busy");
-          if (!form.hidden) button.disabled = !price || pendingSessionStarts.has(id);
+          if (!form.hidden) button.disabled = pendingSessionStarts.has(id);
         }
       }
 
@@ -1966,6 +2111,16 @@
       // The functions above are unchanged. The functions below add billing, quick add,
       // metrics, filters and request monitoring by wrapping the originals where a card
       // or the dashboard needs extra content.
+      function ensureReportCollectionMetrics() {
+        const metrics = $("reportOutstanding")?.closest(".metrics");
+        if (!metrics) return;
+        const fields = [["reportGamingCollected", "Gaming collected"], ["reportSnackCollected", "Snacks collected"], ["reportCashCollected", "Cash collected"], ["reportOnlineCollected", "Online collected"]];
+        for (const [id, label] of fields) if (!$(id)) {
+          const metric = document.createElement("div"); metric.className = "metric";
+          metric.innerHTML = `<span class="hint">${label}</span><b id="${id}">INR 0</b>`;
+          metrics.appendChild(metric);
+        }
+      }
       const pendingExtensions = new Set();
       function timerExtensionButtons(p) {
         const id = esc(p.id), arg = argument(p.id);
@@ -2021,6 +2176,16 @@
         }
         const empty = $("noFilterMatch");
         if (empty) empty.hidden = !(activePCs().length && !shown);
+      }
+      function ensureReportCollectionMetrics() {
+        const metrics = $("reportOutstanding")?.closest(".metrics");
+        if (!metrics) return;
+        const fields = [["reportGamingCollected", "Gaming collected"], ["reportSnackCollected", "Snacks collected"], ["reportCashCollected", "Cash collected"], ["reportOnlineCollected", "Online collected"]];
+        for (const [id, label] of fields) if (!$(id)) {
+          const metric = document.createElement("div"); metric.className = "metric";
+          metric.innerHTML = `<span class="hint">${label}</span><b id="${id}">INR 0</b>`;
+          metrics.appendChild(metric);
+        }
       }
       const baseRenderDashboard = renderDashboard;
       renderDashboard = function () {
@@ -2080,6 +2245,144 @@
       setInterval(loadBillingReport, 15000);
       setInterval(falsePollingTick, 1000);
 
+    </script>
+    <script>
+      // Billing ledger controls. These assignments extend the existing dashboard
+      // renderer without changing its timer, card, or polling event listeners.
+      let snackMenu = [];
+
+      function billingHistoryRows(session) {
+        const extensions = Array.isArray(session.extensions) ? session.extensions : [];
+        const payments = Array.isArray(session.payment_history) ? session.payment_history : [];
+        const snacks = Array.isArray(session.snack_orders) ? session.snack_orders : [];
+        const extensionHTML = extensions.map(item =>
+          `<tr><td>${esc(item.timestamp)}</td><td>${Number(item.added_minutes) || 0} min</td><td>${money(item.amount)}</td></tr>`
+        ).join("") || `<tr><td colspan="3" class="hint">No extensions recorded.</td></tr>`;
+        const paymentHTML = payments.map(item =>
+          `<tr><td>${esc(item.timestamp)}</td><td>${money(item.amount)}</td><td>${esc(item.method || "cash")}</td></tr>`
+        ).join("") || `<tr><td colspan="3" class="hint">No payments recorded.</td></tr>`;
+        const snackBalances = new Map();
+        for (const item of snacks) {
+          const current = snackBalances.get(item.item_id) || { name: item.item_name, quantity: 0, total: 0 };
+          current.quantity += Number(item.quantity) || 0; current.total += Number(item.total_amount) || 0; snackBalances.set(item.item_id, current);
+        }
+        const snackHTML = [...snackBalances].filter(([, item]) => item.quantity > 0).map(([itemID, item]) =>
+          `<tr><td>${esc(item.name)} × ${item.quantity}</td><td>${money(item.total)}</td><td><button onclick="adjustSnack(${argument(session.id)},${argument(itemID)},-1)">−</button> <button onclick="adjustSnack(${argument(session.id)},${argument(itemID)},1)">+</button> <button onclick="adjustSnack(${argument(session.id)},${argument(itemID)},-${item.quantity})">Remove</button></td></tr>`
+        ).join("") || `<tr><td colspan="3" class="hint">No snack orders recorded.</td></tr>`;
+        return `<div class="billing-history-grid">
+          <div><h4>Extension History</h4><div class="table-wrap"><table><thead><tr><th>Timestamp</th><th>Minutes</th><th>Amount</th></tr></thead><tbody>${extensionHTML}</tbody></table></div></div>
+          <div><h4>Payment History</h4><div class="table-wrap"><table><thead><tr><th>Timestamp</th><th>Amount</th><th>Method</th></tr></thead><tbody>${paymentHTML}</tbody></table></div></div>
+          <div><h4>Snack Order History</h4><div class="table-wrap"><table><thead><tr><th>Item / quantity</th><th>Total</th><th>Adjust</th></tr></thead><tbody>${snackHTML}</tbody></table></div></div>
+        </div>`;
+      }
+
+      function renderBillingSessions(sessions) {
+        for (const p of activePCs()) {
+          const element = $("bill-" + p.id), form = $("session-form-" + p.id), details = $("session-details-" + p.id);
+          if (!element || !form || !details) continue;
+          const session = sessions.find(x => x.pc_id === p.id && x.pc_address === p.address && x.status === "open");
+          form.hidden = !!session; details.hidden = !session; element.hidden = !session;
+          if (!session) { element.textContent = ""; details.innerHTML = ""; continue; }
+          const purchased = Number(session.purchased_minutes) || 0;
+          const additional = Number(session.additional_minutes) || 0;
+          const due = Number(session.amount_due ?? Math.max(0, Number(session.final_amount) - Number(session.amount_paid))) || 0;
+          const snackAmount = Number(session.snack_amount) || 0;
+          const status = session.payment_status || "unpaid";
+          const menuOptions = snackMenu.filter(item => item.available).map(item =>
+            `<option value="${esc(item.id)}">${esc(item.name)} — ${money(item.unit_price)}</option>`).join("");
+          element.textContent = `${session.customer_name} · ${session.category} · ${purchased + additional} min · ${money(session.final_amount)}`;
+          details.innerHTML = `<div class="billing-lines">
+            ${[["Customer", session.customer_name || "—"], ["Category", `${session.category} · ${session.players} player(s)`], ["Started", session.started_at || "—"], ["Original purchased time", `${purchased} min`], ["Original purchase amount", money(session.purchased_amount)], ["Additional time", `${additional} min`], ["Extension charges", money(session.additional_amount)], ["Gaming charges", money(session.gaming_amount ?? (Number(session.purchased_amount) + Number(session.additional_amount)))], ["Snack charges", money(snackAmount)], ["Total session duration", `${purchased + additional} min`], ["Final bill", money(session.final_amount)], ["Total paid", money(session.amount_paid)], ["Amount due", money(due)], ["Payment status", status]].map(([label, value]) => `<div class="billing-line"><span>${esc(label)}</span><b class="${label === "Payment status" ? "pay " + (status === "paid" ? "paid" : "pending") : ""}">${esc(value)}</b></div>`).join("")}
+          </div>
+          <div class="billing-extension" style="margin-top:10px"><input id="billing-minutes-${esc(p.id)}" type="number" min="1" step="1" placeholder="Minutes"><input id="billing-amount-${esc(p.id)}" type="number" min="15" step="1" placeholder="₹ Amount"><button class="billing-action" onclick="extendCustomBillingSession(${argument(p.id)})">Extend</button></div>
+          <div class="billing-extension" style="margin-top:10px"><input id="pay-amount-${esc(session.id)}" type="number" min="1" step="1" placeholder="Payment amount"><select id="pay-method-${esc(session.id)}"><option value="cash">Cash</option><option value="online">Online / UPI / QR / Bank</option></select><button class="billing-action" onclick="recordSessionPayment(${argument(session.id)})">Record Payment</button><button class="billing-action" ${due === 0 ? "disabled" : ""} onclick="recordSessionPayment(${argument(session.id)}, true)">Mark Paid</button><button class="primary billing-action" onclick="sessionAction(${argument(session.id)}, 'close')">Close Session</button></div>
+          <div class="billing-extension" style="margin-top:10px"><select id="snack-item-${esc(session.id)}"><option value="">Add snack or beverage…</option>${menuOptions}</select><input id="snack-quantity-${esc(session.id)}" type="number" min="1" step="1" value="1" aria-label="Snack quantity"><button class="billing-action" ${menuOptions ? "" : "disabled"} onclick="addSnackToSession(${argument(session.id)})">Add Snacks</button></div>
+          ${billingHistoryRows(session)}`;
+        }
+        if (typeof applyDashboardFilters === "function") applyDashboardFilters();
+      }
+
+      async function recordSessionPayment(id, settle = false) {
+        const amountInput = $("pay-amount-" + id), methodInput = $("pay-method-" + id);
+        const amount = settle ? 0 : Math.floor(Number(amountInput?.value || 0));
+        try {
+          await request("/api/sessions/" + encodeURIComponent(id) + "/pay", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ amount, method: methodInput?.value || "cash", request_id: requestID() }) }, { feature: "payment" });
+          await loadBilling();
+        } catch (e) { alert(e.message); }
+      }
+
+      async function addSnackToSession(id) {
+        const item = $("snack-item-" + id), quantity = Math.floor(Number($("snack-quantity-" + id)?.value || 0));
+        if (!item?.value || quantity < 1) return;
+        try {
+          await request("/api/sessions/" + encodeURIComponent(id) + "/snacks", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ item_id: item.value, quantity, request_id: requestID() }) }, { feature: "snacks" });
+          await loadBilling();
+        } catch (e) { alert(e.message); }
+      }
+
+      async function adjustSnack(sessionID, itemID, delta) {
+        try { await request("/api/sessions/" + encodeURIComponent(sessionID) + "/snacks/adjust", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ item_id: itemID, quantity_delta: delta, request_id: requestID() }) }, { feature: "snacks" }); await loadBilling(); } catch (e) { alert(e.message); }
+      }
+
+      function ensureSnackMenuPanel() {
+        const price = $("priceList");
+        if (!price || $("snackMenuAdmin")) return;
+        const section = document.createElement("section");
+        section.id = "snackMenuAdmin"; section.className = "panel"; section.style.marginTop = "16px";
+        section.innerHTML = `<div class="top"><div><h2>Snacks &amp; beverages</h2><div class="hint">Configure the live menu and prices. Existing orders keep their original unit price.</div></div></div><div class="row" style="margin:8px 0"><input id="snack-name" placeholder="Item name"><select id="snack-category"><option>Snacks</option><option>Cold Drinks</option><option>Water</option><option>Packaged Food</option><option>Other</option></select><input id="snack-price" type="number" min="0" step="1" placeholder="₹ Price"><label class="row"><input id="snack-available" type="checkbox" checked> Available</label><button class="primary" onclick="saveSnackMenuItem()">Add item</button></div><div class="table-wrap"><table><thead><tr><th>Item</th><th>Category</th><th>Price</th><th>Availability</th><th></th></tr></thead><tbody id="snackMenuRows"></tbody></table></div>`;
+        price.closest("section")?.after(section);
+      }
+
+      function renderSnackMenuAdmin() {
+        ensureSnackMenuPanel();
+        const rows = $("snackMenuRows"); if (!rows) return;
+        rows.innerHTML = snackMenu.map(item => `<tr><td>${esc(item.name)}</td><td>${esc(item.category)}</td><td>${money(item.unit_price)}</td><td>${item.available ? "Available" : "Out of stock"}</td><td><button onclick="editSnackMenuItem(${argument(item.id)})">Edit</button> <button onclick="deleteSnackMenuItem(${argument(item.id)})">Delete</button></td></tr>`).join("") || `<tr><td colspan="5" class="hint">No menu items configured.</td></tr>`;
+      }
+
+      async function saveSnackMenuItem(existing = null) {
+        const item = existing || {};
+        const name = existing ? prompt("Snack or beverage name", existing.name) : $("snack-name")?.value;
+        const category = existing ? prompt("Category: Snacks, Cold Drinks, Water, Packaged Food, or Other", existing.category) : $("snack-category")?.value;
+        const rawPrice = existing ? prompt("Unit price in INR", String(existing.unit_price)) : $("snack-price")?.value;
+        if (name === null || category === null || rawPrice === null) return;
+        const price = Math.floor(Number(rawPrice)); if (!name?.trim() || !Number.isSafeInteger(price) || price < 0) { alert("Enter a valid item name and non-negative price."); return; }
+        const available = existing ? confirm("Keep this item available for ordering?") : !!$("snack-available")?.checked;
+        try { await request("/api/snacks/menu", { method: existing ? "PUT" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: existing?.id || "", name: name.trim(), category, unit_price: price, available }) }, { feature: "snack-menu" }); await loadBilling(); } catch (e) { alert(e.message); }
+      }
+      function editSnackMenuItem(id) { const item = snackMenu.find(x => x.id === id); if (item) saveSnackMenuItem(item); }
+      async function deleteSnackMenuItem(id) { if (!confirm("Delete this menu item? Existing orders will be preserved.")) return; try { await request("/api/snacks/menu?id=" + encodeURIComponent(id), { method: "DELETE" }, { feature: "snack-menu" }); await loadBilling(); } catch (e) { alert(e.message); } }
+
+      async function loadBilling() {
+        try {
+          const [catalog, sessions, menu] = await Promise.all([request("/api/pricing"), request("/api/sessions?status=open"), request("/api/snacks/menu")]);
+          billingCatalog = Array.isArray(catalog.entries) ? catalog : billingCatalog;
+          snackMenu = Array.isArray(menu) ? menu : [];
+          renderSnackMenuAdmin();
+          activeBillingSessions = Array.isArray(sessions) ? sessions : [];
+          renderBillingSessions(activeBillingSessions); renderPriceList();
+          await Promise.all([loadHistory(), loadBillingReport()]);
+          const summary = await request("/api/billing/summary");
+          $("metricRevenue").textContent = summary.enabled ? money(summary.today_collected) : "--";
+          $("billingStatus").hidden = !!summary.enabled; $("billingStatus").textContent = summary.configuration_status || "Billing is disabled on this machine.";
+        } catch (e) { $("billingStatus").hidden = false; $("billingStatus").textContent = "Billing unavailable: " + e.message; }
+      }
+
+      function renderBillingReportExtras(report) {
+        const outstanding = $("reportOutstanding")?.closest(".metrics"); if (!outstanding) return;
+        let extra = $("billingReportExtras");
+        if (!extra) { extra = document.createElement("div"); extra.id = "billingReportExtras"; extra.className = "metrics"; outstanding.after(extra); }
+        extra.innerHTML = [["Snack sales", report.snack_sales], ["Cash collected", report.cash_collected], ["Online collected", report.online_collected], ["Unpaid sessions", report.unpaid_sessions], ["Partially paid", report.partially_paid_sessions], ["Paid sessions", report.paid_sessions]].map(([label, value]) => `<div class="metric"><span class="hint">${esc(label)}</span><b>${typeof value === "number" && label.includes("sessions") ? value : money(value)}</b></div>`).join("");
+      }
+      const priorLoadBillingReport = loadBillingReport;
+      loadBillingReport = async function () {
+        await priorLoadBillingReport();
+        try { const date = $("billingReportDate")?.value; if (date) renderBillingReportExtras(await request("/api/billing/report?date=" + encodeURIComponent(date))); } catch (_) {}
+      };
+
+      sessionAction = async function (id, action, deviceId = "") {
+        if (action === "pay") { await recordSessionPayment(id, true); return; }
+        try { const session = activeBillingSessions.find(item => item.id === id); await request("/api/sessions/" + encodeURIComponent(id) + "/" + action, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }, { deviceId: deviceId || session?.pc_id || "", feature: "session-" + action }); await loadBilling(); } catch (e) { alert(e.message); }
+      };
     </script>
   </body>
 </html> -->
@@ -3576,7 +3879,7 @@
             return `<tr><td>${esc(item.name || item.device_id)}</td><td>${esc(state)}</td><td>${pending}</td><td>${esc(item.last_successful_sync_at || "Never")}</td><td>${esc(item.error || "")}</td></tr>`;
           }).join("") || "<tr><td colspan='5'>No device synchronization status yet. Use Sync PCs to check registered systems.</td></tr>";
           $("billingReportRecords").innerHTML = records.map(item =>
-            `<tr><td>${esc(item.customer_name)}</td><td>${esc(item.pc_name)} <small class="hint">${esc(item.pc_id)}</small></td><td>${Number(item.players) || 0}</td><td>${esc(report.date)}</td><td>${esc(item.started_at)}</td><td>${esc(item.ended_at || (item.expected_end_at ? "Open — expected " + item.expected_end_at : "Open"))}</td><td>${Number(item.purchased_minutes) || 0} min</td><td>${Number(item.additional_minutes) || 0} min</td><td>${money(item.final_amount)}</td><td>${money(item.amount_paid)}</td><td>${money(Math.max(0, Number(item.final_amount) - Number(item.amount_paid)))}</td><td>${esc(item.payment_status)}</td></tr>`
+            `<tr><td>${esc(item.customer_name)}</td><td>${esc(item.pc_name)} <small class="hint">${esc(item.pc_id)}</small></td><td>${Number(item.players) || 0}</td><td>${esc(report.date)}</td><td>${esc(item.started_at)}</td><td>${esc(item.ended_at || (item.expected_end_at ? "Open — expected " + item.expected_end_at : "Open"))}</td><td>${Number(item.purchased_minutes) || 0} min</td><td>${Number(item.additional_minutes) || 0} min</td><td>${money(item.final_amount)}</td><td>${money(item.amount_paid)}</td><td>${money(Number(item.amount_due ?? Math.max(0, Number(item.final_amount) - Number(item.amount_paid))))}</td><td>${esc(item.payment_status)}</td></tr>`
           ).join("") || "<tr><td colspan='12'>No session records for this date.</td></tr>";
           const status = $("billingReportStatus");
           if (report.complete) {
@@ -3626,14 +3929,22 @@
             details.innerHTML = "";
             continue;
           }
-          const duration = Number(session.purchased_minutes) + Number(session.additional_minutes);
+          const purchasedMinutes = Number(session.purchased_minutes) || 0;
+          const additionalMinutes = Number(session.additional_minutes) || 0;
+          const purchasedAmount = Number(session.purchased_amount) || 0;
+          const additionalAmount = Number(session.additional_amount) || 0;
+          const duration = purchasedMinutes + additionalMinutes;
           const due = Math.max(0, Number(session.final_amount) - Number(session.amount_paid));
           element.textContent = `${session.customer_name} · ${session.category} · ${duration} min · ${money(session.final_amount)}`;
           details.innerHTML = [
             ["Customer", session.customer_name || "—"],
             ["Category", `${session.category} · ${session.players} player(s)`],
             ["Started", session.started_at || "—"],
-            ["Duration", `${duration} min`],
+            ["Purchased time", `${purchasedMinutes} min`],
+            ["Additional time", `${additionalMinutes} min`],
+            ["Purchased amount", money(purchasedAmount)],
+            ["Additional amount", money(additionalAmount)],
+            ["Total time", `${duration} min`],
             ["Current bill", money(session.final_amount)],
             ["Amount due", money(due)],
             ["Payment", session.payment_status || "unpaid"],
@@ -3642,6 +3953,11 @@
           ).join("") + `<div class="row" style="margin-top:8px">
             <button class="billing-action" ${due === 0 ? "disabled" : ""} onclick="sessionAction(${argument(session.id)}, 'pay')">Mark Paid</button>
             <button class="primary billing-action" onclick="sessionAction(${argument(session.id)}, 'close')">Close Session</button>
+          </div>
+          <div class="billing-extension" style="margin-top:8px">
+            <input id="billing-minutes-${esc(p.id)}" type="number" min="1" step="1" placeholder="Minutes">
+            <input id="billing-amount-${esc(p.id)}" type="number" min="15" step="1" placeholder="₹ Amount">
+            <button class="billing-action" onclick="extendCustomBillingSession(${argument(p.id)})">Extend</button>
           </div>`;
         }
       }
@@ -3687,7 +4003,7 @@
             const payButton = x.final_amount > x.amount_paid
               ? `<button onclick="sessionAction(${argument(x.id)},'pay',${argument(x.pc_id)})">Paid</button> `
               : "";
-            return `<tr><td>${esc(x.id)}</td><td>${esc(x.pc_name)}</td><td>${esc(x.customer_name)}</td><td>${x.players}</td><td>${esc(x.started_at)}</td><td>${esc(x.ended_at || x.expected_end_at)}</td><td>${Number(x.purchased_minutes) + Number(x.additional_minutes)} min</td><td>${money(x.final_amount)}</td><td>${esc(x.payment_status)}</td><td>${payButton}<button onclick="sessionAction(${argument(x.id)},'close',${argument(x.pc_id)})">Close</button></td></tr>`;
+            return `<tr><td>${esc(x.id)}</td><td>${esc(x.pc_name)}</td><td>${esc(x.customer_name)}</td><td>${x.players}</td><td>${esc(x.started_at)}</td><td>${esc(x.ended_at || x.expected_end_at)}</td><td>${Number(x.purchased_minutes) || 0} + ${Number(x.additional_minutes) || 0} min</td><td>${money(x.final_amount)}</td><td>${esc(x.payment_status)}</td><td>${payButton}<button onclick="sessionAction(${argument(x.id)},'close',${argument(x.pc_id)})">Close</button></td></tr>`;
           }).join("") || "<tr><td colspan='10'>No billing sessions recorded.</td></tr>";
         } catch(e) {
           $("historyRows").innerHTML = `<tr><td colspan='10'>${esc(e.message)}</td></tr>`;
@@ -3700,13 +4016,26 @@
         alert("Backup is not connected yet. Add a backup endpoint to backupBilling() to enable it.");
       }
 
+      function assignedCategoryForPC(p) {
+        const name = String(p?.name || "").toLowerCase();
+        if (name.includes("ps5")) return "PS5";
+        if (name.includes("racing pro")) return "Racing Pro";
+        if (name.includes("racing lite") || name.includes("racing simulator")) return "Racing Lite";
+        const match = name.match(/\bpc\s*[-_ ]?([1-4])(?:\D|$)/);
+        if (match) return ["", "PC Pro", "PC Pro", "PC Lite", "PC Lite"][Number(match[1])];
+        return "";
+      }
+
       function sessionFormFor(id) {
+        const pc = pcs.find(item => item.id === id);
         const categories = [...new Set(billingCatalog.entries.map(entry => entry.category))];
         let state = sessionFormState.get(id);
         if (!state) {
-          state = { customer: "", category: "", players: 0, durationValue: "", durationUnit: "M", manualPrice: "" };
+          state = { customer: "", category: "", players: 0, durationValue: "", durationUnit: "M", manualPrice: "", priceEdited: false, quoteReady: false, quoteVersion: 0 };
           sessionFormState.set(id, state);
         }
+        const assigned = assignedCategoryForPC(pc);
+        if (assigned) state.category = assigned;
         if (!categories.includes(state.category)) state.category = categories[0] || "";
         const players = [...new Set(billingCatalog.entries
           .filter(entry => entry.category === state.category).map(entry => entry.players))];
@@ -3724,6 +4053,8 @@
         const price = billingCatalog.entries.find(entry =>
           entry.category === state.category && entry.players === Number(state.players) &&
           entry.duration_minutes === durationMinutes);
+        if (!state.manualPrice && price) state.manualPrice = String(price.amount);
+        if (price && !state.quoteReady) state.quoteReady = true;
         return { state, categories, players, durationMinutes, price };
       }
 
@@ -3744,10 +4075,8 @@
               value="${esc(state.customer)}" oninput="updateCardSessionForm(${argument(p.id)}, 'customer')">
           </div>
           <div class="session-field pricing">
-            <label for="sf-category-${id}">Pricing Group</label>
-            <select id="sf-category-${id}" onchange="updateCardSessionForm(${argument(p.id)}, 'category')">
-              ${options(categories, state.category, value => value)}
-            </select>
+            <label>Pricing Group</label>
+            <span id="sf-category-${id}" class="manual-input" data-category="${esc(state.category)}">${esc(state.category || "Assigned by PC")}</span>
           </div>
           <div class="session-field players">
             <label for="sf-players-${id}">Players</label>
@@ -3771,17 +4100,17 @@
             <span id="sf-duration-error-${id}" class="field-error" role="alert"></span>
           </div>
           <div class="manual-field price">
-            <label for="sf-price-${id}">Manual price</label>
+            <label for="sf-price-${id}">Session price</label>
             <div class="manual-price">
               <span class="currency-symbol" aria-hidden="true">₹</span>
-              <input id="sf-price-${id}" class="manual-input" type="number" min="0" step="0.01"
-                inputmode="decimal" placeholder="Optional" value="${esc(state.manualPrice)}"
+              <input id="sf-price-${id}" class="manual-input" type="number" min="15" step="1"
+                inputmode="numeric" placeholder="₹ Amount" value="${esc(state.manualPrice)}"
                 oninput="updateCardSessionForm(${argument(p.id)}, 'price')">
             </div>
             <span id="sf-price-error-${id}" class="field-error" role="alert"></span>
           </div>
-          <span class="manual-note">Manual price is not saved; billing uses the listed estimate.</span>
-          <button id="sf-start-${id}" type="button" class="btn-start-session" ${!price ? "disabled" : ""}
+          <span class="manual-note">Time and price are synchronized by the billing service. Custom durations use the published package rule.</span>
+          <button id="sf-start-${id}" type="button" class="btn-start-session" ${!price && !state.quoteReady ? "disabled" : ""}
             onclick="startPCBillingSession(${argument(p.id)})">Start Session</button>
           <div id="sf-message-${id}" class="pc-session-message" role="status"></div>
         </div>`;
@@ -3799,44 +4128,55 @@
         state.customer = customer.value;
         state.durationValue = duration.value;
         state.durationUnit = unit.value;
+        state.category = category.dataset.category || state.category;
+        state.players = Number(player.value);
         state.manualPrice = manualPrice.value;
+        if (changed === "price") state.priceEdited = true;
+        if (["duration", "unit", "players"].includes(changed)) state.priceEdited = false;
         duration.max = unit.value === "H" ? "24" : "1440";
-        if (changed === "category") {
-          state.category = category.value;
-          state.players = 0;
-        } else if (changed === "players") {
-          state.players = Number(player.value);
-        }
-        const data = sessionFormFor(id);
-        if (changed === "category") {
-          player.innerHTML = data.players.map(value =>
-            `<option value="${value}">${value} Player${value === 1 ? "" : "s"}</option>`
-          ).join("");
-          player.value = String(data.state.players);
-        }
-        data.state.category = category.value;
-        data.state.players = Number(player.value);
         const maxDuration = unit.value === "H" ? 24 : 1440;
         const validDuration = Number.isSafeInteger(Number(duration.value)) &&
           Number(duration.value) >= 1 && Number(duration.value) <= maxDuration &&
           ["M", "H"].includes(unit.value);
         const durationError = $("sf-duration-error-" + id);
-        if (durationError) durationError.textContent = validDuration && !data.price
-          ? "No listed price for this duration and group."
-          : validDuration ? "" : `Enter a whole duration from 1 to ${maxDuration} ${unit.value === "H" ? "hours" : "minutes"}.`;
-        const enteredPrice = manualPrice.value.trim();
-        const parsedPrice = enteredPrice === "" ? null : Number(enteredPrice);
-        const validPrice = parsedPrice === null ||
-          (Number.isFinite(parsedPrice) && parsedPrice >= 0 && parsedPrice <= 9999999.99);
+        if (durationError) durationError.textContent = validDuration ? "" : `Enter a whole duration from 1 to ${maxDuration} ${unit.value === "H" ? "hours" : "minutes"}.`;
+        const parsedPrice = Number(manualPrice.value);
+        const validPrice = Number.isSafeInteger(parsedPrice) && parsedPrice >= 15 && parsedPrice <= 9999999;
         const priceError = $("sf-price-error-" + id);
-        if (priceError) priceError.textContent = validPrice ? "" : "Enter a valid non-negative amount.";
-        $("sf-estimate-" + id).textContent = data.price ? rupees(data.price.amount) : "--";
-        $("sf-start-" + id).disabled = !data.price || !validDuration || !validPrice || pendingSessionStarts.has(id);
+        if (priceError) priceError.textContent = validPrice ? "" : "Enter a whole amount of at least ₹15.";
+        $("sf-estimate-" + id).textContent = validPrice ? rupees(parsedPrice) : "--";
+        $("sf-start-" + id).disabled = !state.quoteReady || !validDuration || !validPrice || pendingSessionStarts.has(id);
         const message = $("sf-message-" + id);
         if (message) message.textContent = "";
         customer.classList?.remove("field-invalid");
         duration.classList?.toggle("field-invalid", !validDuration);
         manualPrice.classList?.toggle("field-invalid", !validPrice);
+        if (changed === "customer") return;
+        if (!validDuration || !Number.isSafeInteger(state.players) || state.players < 1 || !state.category) return;
+        const version = ++state.quoteVersion;
+        const params = new URLSearchParams({ category: state.category, players: String(state.players) });
+        if (changed === "price") params.set("amount", String(parsedPrice));
+        else params.set("duration_minutes", String(Number(duration.value) * (unit.value === "H" ? 60 : 1)));
+        request("/api/pricing/quote?" + params.toString()).then(quote => {
+          if (version !== state.quoteVersion) return;
+          state.quoteReady = true;
+          state.manualPrice = String(quote.amount);
+          manualPrice.value = String(quote.amount);
+          if (changed === "price") {
+            const minutes = Number(quote.duration_minutes);
+            unit.value = minutes >= 60 && minutes % 60 === 0 ? "H" : "M";
+            duration.value = String(unit.value === "H" ? minutes / 60 : minutes);
+            state.durationValue = duration.value;
+            state.durationUnit = unit.value;
+          }
+          $("sf-estimate-" + id).textContent = rupees(quote.amount);
+          $("sf-start-" + id).disabled = pendingSessionStarts.has(id);
+        }).catch(error => {
+          if (version !== state.quoteVersion) return;
+          state.quoteReady = false;
+          if (durationError) durationError.textContent = error.message;
+          $("sf-start-" + id).disabled = true;
+        });
       }
 
       async function startPCBillingSession(id) {
@@ -3859,7 +4199,7 @@
           customerInput.focus();
           return;
         }
-        const category = $("sf-category-" + id).value;
+        const category = $("sf-category-" + id).dataset.category;
         const players = Number($("sf-players-" + id).value);
         const durationValue = Number($("sf-duration-" + id).value);
         const durationUnit = $("sf-unit-" + id).value;
@@ -3875,16 +4215,14 @@
         }
         const durationMinutes = durationValue * (durationUnit === "H" ? 60 : 1);
         const customPrice = manualPriceValue === "" ? null : Number(manualPriceValue);
-        if (customPrice !== null && (!Number.isFinite(customPrice) || customPrice < 0 || customPrice > 9999999.99)) {
-          priceError.textContent = "Enter a valid non-negative amount.";
+        if (customPrice === null || !Number.isSafeInteger(customPrice) || customPrice < 15 || customPrice > 9999999) {
+          priceError.textContent = "Enter a whole amount between ₹15 and ₹9999999.";
           $("sf-price-" + id).focus();
           return;
         }
-        const price = billingCatalog.entries.find(entry =>
-          entry.category === category && entry.players === players &&
-          entry.duration_minutes === durationMinutes);
-        if (!isActive(p) || !price || !Number.isSafeInteger(players) || players < 1) {
-          message.textContent = !isActive(p) ? "This PC is inactive." : "Select a valid player count and listed price.";
+        const state = sessionFormFor(id).state;
+        if (!isActive(p) || !state.quoteReady || !Number.isSafeInteger(players) || players < 1) {
+          message.textContent = !isActive(p) ? "This PC is inactive." : "Pricing is still being calculated.";
           return;
         }
         customerInput.classList.remove("field-invalid");
@@ -3902,17 +4240,18 @@
               customer_name: customer,
               players,
               duration_minutes: durationMinutes,
+              ...(state.priceEdited ? { manual_price: customPrice } : {}),
             }),
           }, { deviceId: id, feature: "session-start" });
           if (!session || typeof session.id !== "string" || !session.id.trim() ||
               session.status !== "open" || session.pc_id !== id || session.pc_address !== p.address ||
               session.customer_name !== customer || session.category !== category ||
-              Number(session.players) !== players || Number(session.purchased_minutes) !== durationMinutes) {
+              Number(session.players) !== players || Number(session.purchased_minutes) < 1) {
             throw new Error("The billing service returned an incomplete or mismatched session.");
           }
           sessionFormState.set(id, {
             customer: "", category, players, durationValue: String(durationValue),
-            durationUnit, manualPrice: "",
+            durationUnit, manualPrice: "", priceEdited: false, quoteReady: false, quoteVersion: 0,
           });
           customerInput.value = "";
           activeBillingSessions = activeBillingSessions.filter(item =>
@@ -3926,7 +4265,7 @@
         } finally {
           pendingSessionStarts.delete(id);
           button.removeAttribute("aria-busy");
-          if (!form.hidden) button.disabled = !price || pendingSessionStarts.has(id);
+          if (!form.hidden) button.disabled = pendingSessionStarts.has(id);
         }
       }
 
@@ -4168,6 +4507,142 @@
       setInterval(loadBillingReport, 15000);
       setInterval(falsePollingTick, 1000);
 
+      async function extendCustomBillingSession(id) {
+        const p = pcs.find(item => item.id === id);
+        const minutesInput = $("billing-minutes-" + id);
+        const amountInput = $("billing-amount-" + id);
+        const minutes = Number(minutesInput?.value || 0);
+        const amount = Number(amountInput?.value || 0);
+        if (!p || (minutes > 0 && amount > 0) || (minutes <= 0 && amount <= 0) ||
+            (amount > 0 && (!Number.isSafeInteger(amount) || amount < 15))) return;
+        const session = activeBillingSessions.find(item =>
+          item.pc_id === id && item.pc_address === p.address && item.status === "open");
+        if (!session) return;
+        try {
+          const body = {
+            session_id: session.id, pc_id: id, pc_address: p.address,
+            request_id: globalThis.crypto?.randomUUID?.() || `custom-ext-${id}-${Date.now()}`,
+          };
+          if (amount > 0) body.amount = amount;
+          else body.minutes = Math.floor(minutes);
+          const result = await request("/api/sessions/extend", {
+            method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+          }, { deviceId: id, feature: "session-extension" });
+          if (result?.session_found) {
+            minutesInput.value = "";
+            amountInput.value = "";
+            await loadBilling();
+          }
+        } catch (e) {
+          const target = id === selected ? $("msg") : $("dm-" + id);
+          if (target) target.textContent = e.message;
+        }
+      }
+
+    </script>
+    <script>
+      // Live billing ledger controls. Kept as a small extension layer so the
+      // existing timer dashboard, IDs, polling, and event listeners remain intact.
+      let liveSnackMenu = [];
+
+      function liveSnackTotal(session) {
+        return (Array.isArray(session?.snack_orders) ? session.snack_orders : []).reduce((sum, item) => sum + (Number(item.total_amount) || 0), 0);
+      }
+      function liveBillingHistory(session) {
+        const extensions = Array.isArray(session.extensions) ? session.extensions : [];
+        const payments = Array.isArray(session.payment_history) ? session.payment_history : [];
+        const snacks = Array.isArray(session.snack_orders) ? session.snack_orders : [];
+        const extRows = extensions.map(item => `<tr><td>${esc(item.timestamp)}</td><td>${Number(item.added_minutes) || 0} min</td><td>${money(item.amount)}</td></tr>`).join("") || `<tr><td colspan="3" class="hint">No extensions recorded.</td></tr>`;
+        const payRows = payments.map(item => `<tr><td>${esc(item.timestamp)}</td><td>${money(item.amount)}</td><td>${esc(item.method || "cash")}</td></tr>`).join("") || `<tr><td colspan="3" class="hint">No payments recorded.</td></tr>`;
+        const snackBalances = new Map();
+        for (const item of snacks) { const current = snackBalances.get(item.item_id) || { name: item.item_name, quantity: 0, total: 0 }; current.quantity += Number(item.quantity) || 0; current.total += Number(item.total_amount) || 0; snackBalances.set(item.item_id, current); }
+        const snackRows = [...snackBalances].filter(([, item]) => item.quantity > 0).map(([itemID, item]) => `<tr><td>${esc(item.name)} × ${item.quantity}</td><td>${money(item.total)}</td><td><button onclick="liveAdjustSnack(${argument(session.id)},${argument(itemID)},-1)">−</button> <button onclick="liveAdjustSnack(${argument(session.id)},${argument(itemID)},1)">+</button> <button onclick="liveAdjustSnack(${argument(session.id)},${argument(itemID)},-${item.quantity})">Remove</button></td></tr>`).join("") || `<tr><td colspan="3" class="hint">No snack orders recorded.</td></tr>`;
+        return `<div class="table-wrap"><h3>Extension History</h3><table><thead><tr><th>Timestamp</th><th>Minutes</th><th>Amount</th></tr></thead><tbody>${extRows}</tbody></table><h3 style="margin-top:10px">Payment History</h3><table><thead><tr><th>Timestamp</th><th>Amount</th><th>Method</th></tr></thead><tbody>${payRows}</tbody></table><h3 style="margin-top:10px">Snack Order History</h3><table><thead><tr><th>Item / quantity</th><th>Total</th><th>Adjust</th></tr></thead><tbody>${snackRows}</tbody></table></div>`;
+      }
+      function liveRenderBillingSessions(sessions) {
+        for (const p of activePCs()) {
+          const element = $("bill-" + p.id), form = $("session-form-" + p.id), details = $("session-details-" + p.id);
+          if (!element || !form || !details) continue;
+          const session = sessions.find(x => x.pc_id === p.id && x.pc_address === p.address && x.status === "open");
+          form.hidden = !!session; details.hidden = !session; element.hidden = !session;
+          if (!session) { element.textContent = ""; details.innerHTML = ""; continue; }
+          const purchased = Number(session.purchased_minutes) || 0, additional = Number(session.additional_minutes) || 0;
+          const purchasedAmount = Number(session.purchased_amount) || 0, additionalAmount = Number(session.additional_amount) || 0;
+          const gamingAmount = Number(session.gaming_amount) || purchasedAmount + additionalAmount, snackAmount = Number(session.snack_amount) || liveSnackTotal(session);
+          const due = Math.max(0, Number(session.amount_due ?? Number(session.final_amount) - Number(session.amount_paid)) || 0), status = session.payment_status || "unpaid";
+          const menuOptions = liveSnackMenu.filter(item => item.available && Number(item.unit_price) > 0).map(item => `<option value="${esc(item.id)}">${esc(item.name)} — ${money(item.unit_price)}</option>`).join("");
+          element.textContent = `${session.customer_name} · ${session.category} · ${purchased + additional} min · ${money(session.final_amount)}`;
+          const lines = [["Customer", session.customer_name || "—"], ["Category", `${session.category} · ${session.players} player(s)`], ["Started", session.started_at || "—"], ["Original purchased time", `${purchased} min`], ["Original purchase amount", money(purchasedAmount)], ["Additional time", `${additional} min`], ["Extension charges", money(additionalAmount)], ["Gaming charges", money(gamingAmount)], ["Snack charges", money(snackAmount)], ["Total session duration", `${purchased + additional} min`], ["Final bill", money(session.final_amount)], ["Total paid", money(session.amount_paid)], ["Amount due", money(due)], ["Payment status", status]];
+          details.innerHTML = lines.map(([label, value]) => `<div class="billing-line"><span>${esc(label)}</span><b class="${label === "Payment status" ? "pay " + (status === "paid" ? "paid" : "pending") : ""}">${esc(value)}</b></div>`).join("") + `<div class="billing-extension" style="margin-top:10px"><input id="billing-minutes-${esc(p.id)}" type="number" min="1" step="1" placeholder="Minutes"><input id="billing-amount-${esc(p.id)}" type="number" min="15" step="1" placeholder="₹ Amount"><button class="billing-action" onclick="extendCustomBillingSession(${argument(p.id)})">Extend</button></div><div class="billing-extension" style="margin-top:10px"><input id="live-pay-amount-${esc(session.id)}" type="number" min="1" step="1" placeholder="Payment amount"><select id="live-pay-method-${esc(session.id)}"><option value="cash">Cash</option><option value="online">Online / UPI / QR / Bank</option></select><button class="billing-action" ${due ? "" : "disabled"} onclick="liveRecordPayment(${argument(session.id)},false)">Record Payment</button><button class="billing-action" ${due ? "" : "disabled"} onclick="liveRecordPayment(${argument(session.id)},true)">Mark Paid</button><button class="primary billing-action" onclick="sessionAction(${argument(session.id)}, 'close')">Close Session</button></div><div class="billing-extension" style="margin-top:10px"><select id="live-snack-item-${esc(session.id)}"><option value="">Add snack or beverage…</option>${menuOptions}</select><input id="live-snack-quantity-${esc(session.id)}" type="number" min="1" step="1" value="1" aria-label="Snack quantity"><button class="billing-action" ${menuOptions ? "" : "disabled"} onclick="liveAddSnack(${argument(session.id)})">+ Snacks</button></div>${liveBillingHistory(session)}`;
+        }
+        if (typeof applyDashboardFilters === "function") applyDashboardFilters();
+      }
+      async function liveRecordPayment(id, settle) {
+        const amount = settle ? 0 : Math.floor(Number($("live-pay-amount-" + id)?.value || 0));
+        if (!settle && amount < 1) { alert("Enter a positive payment amount."); return; }
+        try { await request("/api/sessions/" + encodeURIComponent(id) + "/pay", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ amount, method: $("live-pay-method-" + id)?.value || "cash", request_id: requestID() }) }, { feature: "session-payment" }); await loadBilling(); } catch (e) { alert(e.message); }
+      }
+      async function liveAddSnack(id) {
+        const item = $("live-snack-item-" + id)?.value, quantity = Math.floor(Number($("live-snack-quantity-" + id)?.value || 0));
+        if (!item || quantity < 1) { alert("Select a snack and enter a valid quantity."); return; }
+        try { await request("/api/sessions/" + encodeURIComponent(id) + "/snacks", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ item_id: item, quantity, request_id: requestID() }) }, { feature: "session-snack" }); await loadBilling(); } catch (e) { alert(e.message); }
+      }
+      async function liveAdjustSnack(sessionID, itemID, delta) {
+        try { await request("/api/sessions/" + encodeURIComponent(sessionID) + "/snacks/adjust", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ item_id: itemID, quantity_delta: delta, request_id: requestID() }) }, { feature: "session-snack" }); await loadBilling(); } catch (e) { alert(e.message); }
+      }
+      function liveEnsureSnackMenu() {
+        if ($("liveSnackMenuConfig")) return;
+        const dashboard = $("dashboard"); if (!dashboard) return;
+        const section = document.createElement("section"); section.id = "liveSnackMenuConfig"; section.className = "panel"; section.style.marginTop = "16px";
+        section.innerHTML = `<div class="top"><div><h2>Snacks &amp; beverages</h2><div class="hint">Configure available menu items here; historical orders keep their purchase-time price.</div></div></div><div class="row" style="margin:8px 0"><input id="live-snack-name" placeholder="Item name"><select id="live-snack-category"><option>Snacks</option><option>Cold Drinks</option><option>Water</option><option>Packaged Food</option><option>Other</option></select><input id="live-snack-price" type="number" min="0" step="1" placeholder="₹ Price"><label class="row"><input id="live-snack-available" type="checkbox" checked> Available</label><button class="primary" onclick="liveSaveSnackMenu()">Add item</button></div><div class="table-wrap"><table><thead><tr><th>Item</th><th>Category</th><th>Price</th><th>Availability</th><th></th></tr></thead><tbody id="liveSnackMenuRows"></tbody></table></div>`;
+        dashboard.appendChild(section);
+      }
+      function liveRenderSnackMenu() {
+        liveEnsureSnackMenu(); const rows = $("liveSnackMenuRows"); if (!rows) return;
+        rows.innerHTML = liveSnackMenu.map(item => `<tr><td>${esc(item.name)}</td><td>${esc(item.category)}</td><td>${money(item.unit_price)}</td><td>${item.available ? "Available" : "Out of stock"}</td><td><button onclick="liveEditSnackMenu(${argument(item.id)})">Edit</button> <button onclick="liveDeleteSnackMenu(${argument(item.id)})">Remove</button></td></tr>`).join("") || `<tr><td colspan="5" class="hint">No menu items configured.</td></tr>`;
+      }
+      async function liveLoadSnackMenu() { try { const menu = await request("/api/snacks/menu", {}, { feature: "snack-menu" }); liveSnackMenu = Array.isArray(menu) ? menu : []; liveRenderSnackMenu(); liveRenderBillingSessions(activeBillingSessions); } catch (e) { console.warn("Could not load snack menu", e); } }
+      async function liveSaveSnackMenu(existing = null) {
+        const name = existing ? prompt("Item name", existing.name) : $("live-snack-name")?.value;
+        const category = existing ? prompt("Category: Snacks, Cold Drinks, Water, Packaged Food, or Other", existing.category) : $("live-snack-category")?.value;
+        const price = existing ? Number(prompt("Unit price in ₹", existing.unit_price)) : Number($("live-snack-price")?.value || 0);
+        const available = existing ? confirm("Available for ordering? Cancel means out of stock.") : !!$("live-snack-available")?.checked;
+        if (!name || !category || !Number.isSafeInteger(price) || price < 0) return;
+        try { await request("/api/snacks/menu", { method: existing ? "PUT" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...(existing || {}), name, category, unit_price: price, available }) }, { feature: "snack-menu" }); await liveLoadSnackMenu(); if (!existing) { $("live-snack-name").value = ""; $("live-snack-price").value = ""; } } catch (e) { alert(e.message); }
+      }
+      function liveEditSnackMenu(id) { const item = liveSnackMenu.find(x => x.id === id); if (item) liveSaveSnackMenu(item); }
+      async function liveDeleteSnackMenu(id) { if (!confirm("Remove this menu item? Historical orders are retained.")) return; try { await request("/api/snacks/menu?id=" + encodeURIComponent(id), { method: "DELETE" }, { feature: "snack-menu" }); await liveLoadSnackMenu(); } catch (e) { alert(e.message); } }
+      async function liveCollectHistoryPayment(id, deviceId) {
+        const rawAmount = prompt("Payment amount in ₹ (leave blank to pay the full outstanding balance)", "");
+        if (rawAmount === null) return;
+        const rawMethod = prompt("Payment method: Cash or Online", "Cash"); if (rawMethod === null) return;
+        const amount = rawAmount.trim() === "" ? 0 : Number(rawAmount);
+        if (rawAmount.trim() !== "" && (!Number.isSafeInteger(amount) || amount < 1)) { alert("Enter a valid positive amount."); return; }
+        try { await request("/api/sessions/" + encodeURIComponent(id) + "/pay", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ amount, method: rawMethod, request_id: requestID() }) }, { deviceId, feature: "session-payment" }); await loadBilling(); } catch (e) { alert(e.message); }
+      }
+      const liveBaseRenderBillingSessions = renderBillingSessions;
+      renderBillingSessions = liveRenderBillingSessions;
+      const liveBaseLoadHistory = loadHistory;
+      loadHistory = async function () {
+        try {
+          const query = new URLSearchParams({ search: $("historySearch").value, payment_status: $("historyPayment").value });
+          const rows = await request("/api/sessions?" + query.toString());
+          $("historyRows").innerHTML = (Array.isArray(rows) ? rows : []).map(x => `<tr><td>${esc(x.id)}</td><td>${esc(x.pc_name)}</td><td>${esc(x.customer_name)}</td><td>${x.players}</td><td>${esc(x.started_at)}</td><td>${esc(x.ended_at || x.expected_end_at)}</td><td>${Number(x.purchased_minutes) || 0} + ${Number(x.additional_minutes) || 0} min</td><td>${money(x.final_amount)}<br><small class="hint">Gaming ${money(x.gaming_amount)} · Snacks ${money(x.snack_amount)}</small></td><td>${esc(x.payment_status)}<br><small class="hint">Due ${money(x.amount_due)}</small></td><td>${x.final_amount > x.amount_paid ? `<button onclick="liveCollectHistoryPayment(${argument(x.id)},${argument(x.pc_id)})">Payment</button>` : ""}</td></tr>`).join("") || "<tr><td colspan='10'>No billing sessions recorded.</td></tr>";
+        } catch (e) { $("historyRows").innerHTML = `<tr><td colspan='10'>${esc(e.message)}</td></tr>`; }
+      };
+      const liveBaseLoadBillingReport = loadBillingReport;
+      loadBillingReport = async function () {
+        await liveBaseLoadBillingReport();
+        try {
+          const report = await request("/api/billing/report?date=" + encodeURIComponent($("billingReportDate").value || billingTodayDate()));
+          const metrics = $("reportOutstanding")?.closest(".metrics");
+          for (const [id, label] of [["liveReportGaming", "Gaming collected"], ["liveReportSnacks", "Snacks collected"], ["liveReportCash", "Cash collected"], ["liveReportOnline", "Online collected"]]) if (!$(id) && metrics) { const item = document.createElement("div"); item.className = "metric"; item.innerHTML = `<span class="hint">${label}</span><b id="${id}">INR 0</b>`; metrics.appendChild(item); }
+          $("liveReportGaming").textContent = money(report.gaming_revenue_collected); $("liveReportSnacks").textContent = money(report.snack_revenue_collected); $("liveReportCash").textContent = money(report.cash_collected); $("liveReportOnline").textContent = money(report.online_collected);
+        } catch (_) {}
+      };
+      const liveBaseLoadBilling = loadBilling;
+      loadBilling = async function () { await liveBaseLoadBilling(); await liveLoadSnackMenu(); liveRenderBillingSessions(activeBillingSessions); };
+      loadBilling();
     </script>
   </body>
 </html>

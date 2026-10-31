@@ -340,6 +340,8 @@ func (s *BillingStore) report(date string) (BillingReport, error) {
 	pcIndex := make(map[string]int)
 	customers := make(map[string]struct{})
 	for _, session := range sessions {
+		normalizeSessionLedger(&session)
+		gamingCollected, snackCollected := collectedChargeAllocation(session)
 		started, parseErr := sessionTimestamp(session.StartedAt)
 		if parseErr != nil || started.In(billingTimezone).Format("2006-01-02") != date {
 			continue
@@ -354,9 +356,22 @@ func (s *BillingStore) report(date string) (BillingReport, error) {
 		report.BilledAmount += session.FinalAmount
 		report.CollectedAmount += session.AmountPaid
 		report.Revenue += session.AmountPaid
-		due := session.FinalAmount - session.AmountPaid
+		report.GamingRevenueCollected += gamingCollected
+		report.SnackRevenueCollected += snackCollected
+		due := session.AmountDue
 		if due > 0 {
 			report.Outstanding += due
+		}
+		report.CashCollected += session.CashPaid
+		report.OnlineCollected += session.OnlinePaid
+		report.SnackSales += session.SnackAmount
+		switch session.PaymentStatus {
+		case "unpaid":
+			report.UnpaidSessions++
+		case "partial":
+			report.PartiallyPaidSessions++
+		case "paid":
+			report.PaidSessions++
 		}
 		key := session.DeviceID + "\x00" + session.PCID
 		index, exists := pcIndex[key]
@@ -372,9 +387,14 @@ func (s *BillingStore) report(date string) (BillingReport, error) {
 		report.PCs[index].BilledAmount += session.FinalAmount
 		report.PCs[index].CollectedAmount += session.AmountPaid
 		report.PCs[index].Revenue += session.AmountPaid
+		report.PCs[index].GamingRevenueCollected += gamingCollected
+		report.PCs[index].SnackRevenueCollected += snackCollected
 		if due > 0 {
 			report.PCs[index].Outstanding += due
 		}
+		report.PCs[index].CashCollected += session.CashPaid
+		report.PCs[index].OnlineCollected += session.OnlinePaid
+		report.PCs[index].SnackSales += session.SnackAmount
 	}
 	report.UniqueCustomerCount = len(customers)
 	return report, nil
